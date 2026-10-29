@@ -7,8 +7,6 @@ An unofficial Windows port of [HushMic](https://github.com/Fovty/hushmic): real-
 > **Unofficial.** Not affiliated with or endorsed by the HushMic authors. Bugs in this build belong here, not upstream.
 >
 > **No binaries.** This repository publishes no release artifacts; build from source below.
->
-> **No build badge.** None is shown because the inherited CI was red when this README was written — `fmt + clippy + test` stops on `cargo fmt --check`, and `packaging smoke` fails — even though the `windows check (x86_64-pc-windows-msvc)` job passes. Add a badge only when a run is actually green.
 
 ## What this fork changes
 
@@ -29,7 +27,7 @@ Everything below is this fork's Windows layer. On Windows there is no PipeWire s
 | --- | --- |
 | Windows on x86-64 | The only target this fork builds for. |
 | [Microsoft Visual C++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) | The MSVC build imports `VCRUNTIME140.dll`, which Windows does not ship. |
-| VB-CABLE or VoiceMeeter | Supplies the virtual cable the processed audio is rendered into. |
+| VB-CABLE or VoiceMeeter | Supplies the virtual cable the processed audio is rendered into. You then pick its output (`CABLE Output`) as the microphone — see [Run](#run). |
 | [ONNX Runtime 1.27.0 (x64)](https://github.com/microsoft/onnxruntime/releases/tag/v1.27.0) + DPDFNet models | `onnxruntime.dll` and `dpdfnet8_48khz_hr.onnx` (default) plus `dpdfnet2_48khz_hr.onnx` (light tier), all beside `hushmic.exe`. |
 
 HushMic renders into the first render device whose name contains `CABLE Input`, `VoiceMeeter Input` or `VB-Audio`, in that order. `HUSHMIC_SINK=<part of a device name>` overrides the search.
@@ -133,7 +131,7 @@ Asked for repeatedly, so it is written up once: [the driver memo](docs/windows-v
 
 ## Relationship to upstream
 
-This fork is upstream [`v0.11.0`](https://github.com/Fovty/hushmic/tree/v0.11.0) (commit `045daab`) plus the Windows work, and its history contains upstream's commits as they were published. The Linux application still builds from this tree; its build, install and usage documentation in [`docs/`](https://github.com/Fovty/hushmic/tree/main/docs) is upstream's and is not repeated here. Upstream is dual-licensed `MIT OR Apache-2.0`; so is this fork.
+This fork is upstream [`v0.11.0`](https://github.com/Fovty/hushmic/tree/v0.11.0) (commit `045daab`) plus the Windows work, and its history contains upstream's commits as they were published. The Linux application is still part of this tree, but its build, install and usage documentation in [`docs/`](https://github.com/Fovty/hushmic/tree/main/docs) is upstream's and is not repeated here. Upstream is dual-licensed `MIT OR Apache-2.0`; so is this fork.
 
 ## License
 
