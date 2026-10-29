@@ -1,3 +1,8 @@
+// The plugin's host ABI (instantiating through the LADSPA descriptor) is
+// Unix-only: elsewhere this file compiles to a skip, so a Windows
+// `--all-targets` check stays meaningful.
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
+
 //! Which models a host gets when it instantiates the plugin the way
 //! EasyEffects does: through the LADSPA descriptor, with none of the
 //! variables the HushMic app sets. The model paths and the ONNX Runtime
@@ -21,6 +26,12 @@ const HOST_VARS: [&str; 6] = [
     "ORT_DYLIB_PATH",
 ];
 
+#[cfg(not(unix))]
+fn main() {
+    println!("SKIP host_light_model: the LADSPA host ABI is Unix-only");
+}
+
+#[cfg(unix)]
 fn main() {
     if std::env::var_os("HUSHMIC_HOST_CASE").is_some() {
         // One instance at 48 kHz: init_engine runs on this thread.

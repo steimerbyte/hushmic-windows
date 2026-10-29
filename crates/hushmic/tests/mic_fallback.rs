@@ -1,3 +1,5 @@
+#![cfg(unix)] // drives the Linux Controller against stand-in PipeWire tools
+
 //! A mic-recovery fallback through the real `Controller::enable`, with
 //! stand-in PipeWire tools: every start follows the default while the
 //! fallback holds, whatever the device list says (unreadable, or stale and

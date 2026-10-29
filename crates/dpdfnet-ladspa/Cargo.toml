@@ -16,9 +16,14 @@ default = ["native"]
 native = ["hushmic-denoiser/native"]
 
 [dependencies]
-ladspa = "0.3.4"
 hushmic-denoiser = { path = "../hushmic-denoiser", version = "0.11.0" }
 rtrb = "0.4.0"
+
+# The LADSPA host ABI, the realtime-priority requests and the Unix process
+# primitives behind them: Linux/Unix only. The portable core (`Processor`)
+# is what the Windows EXE drives in-process.
+[target.'cfg(unix)'.dependencies]
+ladspa = "0.3.4"
 libc = "0.2"
 
 [dev-dependencies]
@@ -29,3 +34,11 @@ claxon = "0.4" # FLAC decode for the committed public parity fixture
 [[test]]
 name = "host_light_model"
 harness = false
+
+# The gap-measuring CLI links libc and the native engine directly: Unix only.
+# `required-features` scopes it to the native graph but cannot keep it out of a
+# Windows `--all-targets` check (the feature is on by default), and a target
+# with `fn main` cannot be cfg-gated away — which is why CI checks `-p hushmic`.
+[[example]]
+name = "ladder_gap"
+required-features = ["native"]

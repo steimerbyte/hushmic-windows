@@ -56,7 +56,9 @@ PLUGIN="$REPO_ROOT/target/release/libdpdfnet_ladspa.so"
 [ -x "$BIN" ] || { echo "error: $BIN not built" >&2; exit 1; }
 [ -f "$PLUGIN" ] || { echo "error: $PLUGIN not built" >&2; exit 1; }
 
-rm -rf "$DIST"
+# Everything except the Windows staging dir: scripts/build-windows.sh owns
+# dist/hushmic-windows-x86_64/ and this script would otherwise delete it.
+find "$DIST" -mindepth 1 -maxdepth 1 ! -name hushmic-windows-x86_64 -exec rm -rf {} +
 mkdir -p "$DIST"
 
 # ---------------------------------------------------------------------------

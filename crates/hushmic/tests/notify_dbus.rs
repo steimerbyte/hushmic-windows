@@ -1,3 +1,5 @@
+#![cfg(unix)] // zbus (freedesktop notifications) is a Unix-only dependency
+
 //! Round-trip test for the desktop-notification sender against a mock
 //! `org.freedesktop.Notifications` service on a PRIVATE session bus, so it
 //! runs headless (CI) and never touches a real desktop. Self-skips when

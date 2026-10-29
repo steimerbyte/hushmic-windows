@@ -12,6 +12,20 @@ name = "hushmic"
 path = "src/main.rs"
 
 [dependencies]
+directories = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "1"
+hound = "3.5.1"
+rustfft = "6.4.1"
+png = "0.18.1"
+i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
+i18n-embed-fl = "0.10.1"
+rust-embed = "8.12.0"
+
+# The Linux desktop integrations: a StatusNotifierItem tray, the freedesktop
+# notification/portal D-Bus interfaces, and Unix process control.
+[target.'cfg(unix)'.dependencies]
 ksni = { version = "0.3", features = ["blocking"] }
 # Same backend ksni already pulls in (feature-matched: tokio, no async-io
 # stack), used directly for org.freedesktop.Notifications — desktop
@@ -22,10 +36,6 @@ zbus = { version = "5", default-features = false, features = ["tokio", "blocking
 # current-thread runtime + StreamExt::next around the portal Response.
 tokio = { version = "1", default-features = false, features = ["rt", "time"] }
 futures-util = { version = "0.3", default-features = false }
-directories = "6"
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
-toml = "1"
 libc = "0.2"
 # default-features off: accesskit's AT-SPI backend uses ASYNC zbus, which
 # panics under the workspace's tokio-mode zbus pin (no ambient reactor);
@@ -35,12 +45,36 @@ eframe = { version = "0.33.3", default-features = false, features = ["glow", "wa
 # default-features=false above drops winit/default: restore wayland dlopen +
 # client-side decorations (GNOME Wayland would otherwise lose the title bar).
 winit = { version = "0.30", default-features = false, features = ["wayland-dlopen", "wayland-csd-adwaita", "x11"] }
-hound = "3.5.1"
-rustfft = "6.4.1"
-png = "0.18.1"
-i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
-i18n-embed-fl = "0.10.1"
-rust-embed = "8.12.0"
+
+# Windows: no PipeWire filter-chain host to configure, so the EXE runs the
+# audio itself and links the engine the Linux build ships as a LADSPA plugin.
+# `default-features = false` keeps the Linux-only `native` (C + GNU asm)
+# engine off; ONNX Runtime is the engine here.
+[target.'cfg(windows)'.dependencies]
+dpdfnet-ladspa = { path = "../dpdfnet-ladspa", default-features = false }
+eframe = { version = "0.33.3", default-features = false, features = ["glow", "default_fonts"] }
+windows = { version = "0.61", features = [
+  "Win32_Foundation",
+  "Win32_Security",
+  "Win32_Graphics_Gdi",
+  "Win32_Media_Audio",
+  "Win32_Devices_FunctionDiscovery",
+  "Win32_System_Com",
+  "Win32_System_Com_StructuredStorage",
+  "Win32_System_Console",
+  "Win32_Storage_FileSystem",
+  "Win32_System_IO",
+  "Win32_System_LibraryLoader",
+  "Win32_System_Pipes",
+  "Win32_System_Registry",
+  "Win32_System_SystemServices",
+  "Win32_System_Threading",
+  "Win32_System_Variant",
+  "Win32_UI_Input_KeyboardAndMouse",
+  "Win32_UI_Shell",
+  "Win32_UI_Shell_PropertiesSystem",
+  "Win32_UI_WindowsAndMessaging",
+] }
 
 [dev-dependencies]
 # UI harness tests for the A/B window (Tier-A: queries + clicks only, no

@@ -16,6 +16,11 @@
 //!
 //! `rt=1` puts the worker on SCHED_RR 10 (needs CAP_SYS_NICE, e.g. a
 //! container with `--cap-add SYS_NICE`). The last line is a `SUMMARY`.
+//!
+//! The harness drives Linux realtime APIs (affinity, the scheduler, /proc), so
+//! off Unix the file compiles to a one-line refusal and keeps a Windows
+//! `--all-targets` check meaningful.
+#![cfg_attr(not(unix), allow(unused_imports, dead_code))]
 
 use dpdfnet_ladspa::{
     AdaptiveEngine, Aligner, Event, Ladder, Policy, ShadowKind, Step, Tier, WorkerHandle,
@@ -79,6 +84,7 @@ fn arg<'a>(args: &'a BTreeMap<String, String>, k: &str, d: &'a str) -> &'a str {
     args.get(k).map(String::as_str).unwrap_or(d)
 }
 
+#[cfg(unix)]
 fn pin(tid: libc::pid_t, cpu: usize) {
     // SAFETY: a zeroed cpu_set_t is valid; CPU_SET writes inside it.
     unsafe {
@@ -92,6 +98,7 @@ fn pin(tid: libc::pid_t, cpu: usize) {
     }
 }
 
+#[cfg(unix)]
 fn worker_tid() -> libc::pid_t {
     for _ in 0..200 {
         for e in std::fs::read_dir("/proc/self/task").unwrap().flatten() {
@@ -105,6 +112,7 @@ fn worker_tid() -> libc::pid_t {
     panic!("no hushmic-dsp thread");
 }
 
+#[cfg(unix)]
 fn gettid() -> libc::pid_t {
     // SAFETY: no preconditions.
     unsafe { libc::syscall(libc::SYS_gettid) as libc::pid_t }
@@ -158,6 +166,13 @@ fn class_of(s: &Step) -> String {
     }
 }
 
+#[cfg(not(unix))]
+fn main() {
+    eprintln!("ladder_gap: this harness needs a Unix realtime environment (affinity, SCHED_RR/SCHED_FIFO, /proc)");
+    std::process::exit(1);
+}
+
+#[cfg(unix)]
 fn main() {
     let args: BTreeMap<String, String> = std::env::args()
         .skip(1)

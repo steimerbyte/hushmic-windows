@@ -486,27 +486,11 @@ pub const LATENCY_SAMPLES: u32 = 3840;
 /// figure).
 pub const PINNED_QUANTUM: u32 = 480;
 
-/// Runtime processing mode of the chain-alive states. Ephemeral by design:
-/// never serialized to config — a muted mic must not survive into the next
-/// login unnoticed. Values mirror the plugin's "Mode" control port.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum RunMode {
-    #[default]
-    Suppress,
-    Bypass,
-    Mute,
-}
-
-impl RunMode {
-    /// The plugin's "Mode" control port value.
-    pub fn control_value(&self) -> u8 {
-        match self {
-            RunMode::Suppress => 0,
-            RunMode::Bypass => 1,
-            RunMode::Mute => 2,
-        }
-    }
-}
+/// Runtime processing mode of the chain-alive states: defined beside the
+/// control verbs that speak it (`control::RunMode`), because Windows needs
+/// the same type without this module. Re-exported here because every user
+/// of the running chain names it as part of the controller's vocabulary.
+pub use crate::control::RunMode;
 
 /// Owns the `pipewire -c` child that hosts the virtual mic, plus the prior
 /// system default source so it can be restored on teardown.

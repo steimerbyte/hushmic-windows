@@ -4,7 +4,8 @@
 </h1>
 
 <p align="center">
-  <b>Real-time microphone noise suppression for Linux, as a system-wide virtual mic.</b><br>
+  <b>Real-time microphone noise suppression for Linux and Windows.</b><br>
+  On Linux as a system-wide virtual mic; on Windows into a virtual audio cable.
   Open source, runs on the CPU, your audio never leaves the machine.
 </p>
 
@@ -110,6 +111,70 @@ Menu screenshots, keyboard shortcuts, every command and every config key: [docs/
 
 Turn on **Start on login** in the tray menu, or run `hushmic config set autostart true`. For a daemon without a tray icon, `hushmic --headless` and the systemd user unit are described in [docs/headless.md](docs/headless.md). Use one of the two, not both.
 
+## Windows
+
+The same denoiser, hosted by the app instead of by a server. Windows has no PipeWire, so `hushmic.exe` runs the audio itself: WASAPI captures your microphone, each 10 ms hop goes through the same DPDFNet engine the Linux plugin drives, and the result is rendered into a virtual audio cable's input. Latency is the same 80 ms.
+
+Requirements: Windows x86-64, the [Microsoft Visual C++ 2015–2022 Redistributable](https://aka.ms/vs/17/release/vc_redist.x64.exe) (the MSVC build links `VCRUNTIME140.dll`; Windows does not ship it) and a virtual cable, either [VB-CABLE](https://vb-audio.com/Cable/) or VoiceMeeter. HushMic renders into the output device whose name contains `CABLE Input`, `VoiceMeeter Input` or `VB-Audio`, in that order; a name of your own goes in `HUSHMIC_SINK`.
+
+**One step stays manual.** HushMic renders into the cable's *input*, so select the cable's *output* (`CABLE Output`) as the microphone in Windows sound settings, or directly in the app that should use it. HushMic cannot repoint the system default input: Windows has no supported API for it. The tray's **Set as default microphone** entry and `--doctor` say so instead of pretending, and `set_default` in the config only records the wish.
+
+```bash
+./scripts/build-windows.sh                  # also on Windows, under Git Bash
+dist/hushmic-windows-x86_64/hushmic.exe --doctor
+```
+
+The script cross-compiles with `cargo xwin` on Linux (MSVC target, no Windows host needed) and is a plain `cargo build` on Windows. It stages `hushmic.exe`, `onnxruntime.dll` and `models/*.onnx` beside each other — the layout the binary resolves at run time — and fails when one of them is missing instead of shipping a binary that cannot start. The models come from `scripts/setup-assets.sh`; the DLL from the [ONNX Runtime 1.27.0](https://github.com/microsoft/onnxruntime/releases/download/v1.27.0/onnxruntime-win-x64-1.27.0.zip) release archive, via `HUSHMIC_ORT_DLL` or `assets/win/onnxruntime.dll`.
+
+The command line is the Linux one:
+
+```bash
+hushmic.exe --tray              # tray icon only (what the autostart entry registers)
+hushmic.exe                     # same, and asks a running instance to show itself
+hushmic.exe --headless          # no tray icon
+hushmic.exe --doctor            # diagnostics report, exits 1 on problems
+hushmic.exe --version           # version, config path, model directory
+hushmic.exe --help
+hushmic.exe status              # what the running instance is doing
+hushmic.exe mode mute           # suppress | bypass | mute | off
+hushmic.exe toggle bypass
+hushmic.exe config set attn_limit strong
+hushmic.exe devices             # microphones usable as `mic`
+hushmic.exe quit
+```
+
+`hushmic.exe service install` answers with a pointer to autostart, because there is no systemd here. The config file is `%APPDATA%\hushmic\hushmic\config\config.toml` — `hushmic` appears twice because `directories` derives it from organization and application name; `hushmic.exe config path` prints it.
+
+**Start with Windows** is the `HushMic` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, written by `hushmic config set autostart true` (remove it again with `false`). It runs `"…\hushmic.exe" --tray`. The value is compared by content, not existence, so a moved folder reads back as off — `--doctor` then says `autostart entry: missing` for an enabled config — and toggling autostart off and on writes the new path.
+
+**Hotkeys**, provisional and not configurable yet: Ctrl+Alt+M toggles mute, Ctrl+Alt+B toggles bypass, Ctrl+Alt+T is push-to-talk (clean while held) and Ctrl+Alt+Q push-to-mute (silent while held).
+
+**What is missing on Windows** — the honest list:
+
+| Gap | Why |
+| --- | --- |
+| No LADSPA plugin | Windows has no LADSPA host. The same engine runs in-process instead, so there is no EasyEffects-style plugin to load. |
+| No system-default takeover | No supported API repoints the default input; `set_default`, the tray entry and the doctor print the manual step. |
+| No settings window | The tray's **Settings…** entry opens none: it says the settings live in the config file, edited with `hushmic.exe config`. |
+
+The tray holds noise suppression, bypass and mute, the A/B window (`--test-window`: live panes plus a recorded take), the About window with **Copy diagnostics**, and the four hotkeys. Model and suppression strength are per microphone in the config file (`mic_prefs`), set with `hushmic.exe config`.
+
+The EXE is a GUI-subsystem build, so double-clicking it opens no console window. It logs to stderr: start it from a terminal (`hushmic.exe --tray`) to read that log, or run `hushmic.exe --doctor`.
+
+**Status: compile-verified only.** The Windows build type-checks and links; it has not been run on Windows hardware. `hushmic.exe --doctor` is the first thing to run there — it names the capture and render devices it found, the virtual cable, and every asset with `ok` or `MISSING`.
+
+### Windows troubleshooting
+
+**No virtual cable found.** The start fails with `no virtual audio cable found … Render devices found: …` and lists what WASAPI enumerated. Install VB-CABLE, reboot so the driver loads, and check that the output device name contains `CABLE Input`; `HUSHMIC_SINK=<part of the name>` overrides the search. `hushmic.exe --doctor` shows the same list.
+
+**The tray says On, but everyone hears silence.** The chain's start line on stderr names the engine (`[hushmic] chain: … (engine …, attn … dB, 3840 samples latency)`), and `engine silent` means it degraded instead of failing: no usable model for the configured one, or a worker thread it could not spawn, leaves the chain running and outputting zeros by design. The `assets:` block of the doctor report says which file it wanted and whether it is there.
+
+**A model or `onnxruntime.dll` is missing.** The chain refuses to start and names the file: `model file not found at … — place it next to hushmic.exe, or set HUSHMIC_MODEL_DIR` (or `ONNX Runtime library … set ORT_DYLIB_PATH`). The overrides are `HUSHMIC_MODEL_DIR` for the `models` directory, `HUSHMIC_MODEL_PATH` for one file, `HUSHMIC_FALLBACK_MODEL_PATH` for the light model and `ORT_DYLIB_PATH` for the DLL. The build script produces exactly this layout.
+
+**The microphone is unplugged or reset during a call.** The capture read fails, the chain stops with the reason on stderr, and the watchdog restarts it: it checks every 5 s, acts after two consecutive bad ticks (10 s at most) and then stays quiet for 30 s so a broken device cannot become a restart loop. While the saved mic is gone the chain follows the system default and the doctor's `active mic` says so.
+
+**Autostart does not give you a tray icon.** The Run value must be `"…\hushmic.exe" --tray`; `hushmic config set autostart true` writes exactly that, and `hushmic.exe --doctor` shows `autostart entry: present` or `missing`. If you moved the folder after enabling it, toggle it off and on again. `--headless` has no tray by design.
+
 ## Why DPDFNet
 
 I wanted noise suppression on Linux that matches Krisp and installs like an app. I ran the three demo clips through the candidates and scored the output with DNSMOS P.835 (1 to 5, higher is better):
@@ -130,7 +195,7 @@ Three clips are not a formal benchmark, but the source audio is public. Method, 
 
 - [`hushmic-denoiser`](crates/hushmic-denoiser) runs the DPDFNet model on 48 kHz mono audio, on ONNX Runtime or the native engine. It is a plain Rust library you can embed in your own app.
 - `dpdfnet-ladspa` wraps it as a LADSPA plugin.
-- `hushmic` writes a PipeWire `module-filter-chain` config and runs it as a child process. PipeWire owns the real-time scheduling, so no `setcap` is needed. A watchdog recreates the virtual mic after a PipeWire restart or suspend, and quitting restores your previous default input.
+- `hushmic` writes a PipeWire `module-filter-chain` config and runs it as a child process. PipeWire owns the real-time scheduling, so no `setcap` is needed. A watchdog recreates the virtual mic after a PipeWire restart or suspend, and quitting restores your previous default input. On Windows there is no graph to configure, so the same binary is the host itself ([`crates/hushmic/src/win`](crates/hushmic/src/win)): one thread captures the microphone, denoises and renders into the cable, driving the same engine in-process instead of as a plugin.
 
 ## FAQ
 
@@ -160,7 +225,7 @@ cd hushmic
 cargo build --release
 ```
 
-This produces `target/release/hushmic` and `target/release/libdpdfnet_ladspa.so`. `scripts/install.sh` shows the install layout; `crates/dpdfnet-ladspa/examples/run-filter-chain.md` shows how to load the plugin by hand.
+This produces `target/release/hushmic` and `target/release/libdpdfnet_ladspa.so`. `scripts/install.sh` shows the install layout; `crates/dpdfnet-ladspa/examples/run-filter-chain.md` shows how to load the plugin by hand. For Windows, `./scripts/build-windows.sh` stages `dist/hushmic-windows-x86_64/` instead (see [Windows](#windows)).
 
 ## Contributing
 

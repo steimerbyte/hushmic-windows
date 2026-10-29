@@ -4,7 +4,7 @@
 hushmic --headless
 ```
 
-This runs everything the tray does (the virtual mic, the watchdog, microphone recovery, global shortcuts, the CLI socket) without a tray icon or a window. `hushmic status`, `mode`, `toggle`, `config` and `quit` control it. With `enabled = false` in the config it starts idle and prints how to turn the mic on (`hushmic mode suppress`).
+This runs everything the tray does (the virtual mic, the watchdog, microphone recovery, global shortcuts, the CLI socket — a named pipe on Windows) without a tray icon or a window. `hushmic status`, `mode`, `toggle`, `config` and `quit` control it. With `enabled = false` in the config it starts idle and prints how to turn the mic on (`hushmic mode suppress`).
 
 `hushmic config set tray false` makes the normal launch and the autostart entry skip the icon as well. A plain `hushmic` launch still opens the mic test window.
 
@@ -13,6 +13,8 @@ If no system tray exists (GNOME without the AppIndicator extension), HushMic kee
 `--enable-once` is the older one-shot mode: it creates the virtual mic and waits for Ctrl+C, with no watchdog and no CLI socket. Use `--headless` unless a script needs exactly that.
 
 ## Starting at login
+
+On Windows, skip this section: `hushmic config set autostart true` writes the `HushMic` value under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run` instead (see [README › Windows](../README.md#windows)), and `hushmic service install` answers with that pointer because there is no systemd. Everything below is Linux.
 
 Use one of these, not both. Two instances at login race for the single-instance lock; the loser exits with "already running".
 

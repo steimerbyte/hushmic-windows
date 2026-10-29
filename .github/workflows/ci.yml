@@ -70,6 +70,48 @@ jobs:
         env:
           HUSHMIC_ASSERT_ASSETS: "1"
 
+  # The Windows build is the one host whose audio path (WASAPI, in-process
+  # chain, Run key) cannot be exercised on the Linux runners, so at minimum its
+  # COMPILE must stay green: a Windows-only regression would otherwise surface
+  # on the first user who unpacks the zip. cargo-xwin supplies the MSVC CRT/SDK;
+  # no assets are needed to type-check.
+  windows:
+    name: windows check (x86_64-pc-windows-msvc)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Install Rust (stable + the Windows target)
+        uses: dtolnay/rust-toolchain@fa04a1451ff1842e2626ccb99004d0195b455a88 # master (pinned)
+        with:
+          toolchain: stable
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache cargo
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+            ~/.cache/cargo-xwin
+          key: ${{ runner.os }}-cargo-windows-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Install LLVM (clang-cl, lld-link, llvm-lib, llvm-rc)
+        # cargo-xwin drives the MSVC toolchain through LLVM: clang-cl compiles,
+        # lld-link links against the downloaded SDK libs, llvm-lib/llvm-rc build
+        # import libraries and resources.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang lld llvm
+
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --version 0.23.1 --locked
+
+      - name: check (x86_64-pc-windows-msvc)
+        run: cargo xwin check --target x86_64-pc-windows-msvc -p hushmic
+
   # Green fmt/clippy/test says nothing about the tag-time release: this job
   # runs the ACTUAL release pipeline (build-release.sh: tarball, .deb,
   # AppImage) in the same ubuntu:22.04 container, incl. the glibc-floor

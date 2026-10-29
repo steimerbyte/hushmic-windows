@@ -95,7 +95,8 @@ pub enum Frame {
     RecordProgress {
         secs_done: f32,
     },
-    /// The 10 s sample is on disk (in the runtime dir) and playable. Always
+    /// The 10 s sample is on disk (in a private background directory) and
+    /// playable. Always
     /// authoritative: the backend only emits it for a take it stored — a
     /// cancel that raced the completion still yields this playable sample.
     RecordDone,

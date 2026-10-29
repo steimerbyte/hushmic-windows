@@ -1,10 +1,89 @@
 //! CLI control surface: the request/response protocol spoken over the
-//! control socket, the toggle state machine, and the status renderers.
-//! The tray's main loop owns all state; this module is pure except for
-//! the socket plumbing of the listener/client.
+//! control socket (Unix) or named pipe (Windows), the toggle state machine,
+//! and the status renderers. The tray's main loop owns all state; this
+//! module is pure except for the transport plumbing of the listener/client.
+//!
+//! Everything above that plumbing compiles on every host: the mode and
+//! engine types below are the wire vocabulary (`mode`, `toggle`, `status`),
+//! so they live here rather than in the PipeWire-only `controller` /
+//! `diagnostics` modules, which re-export them.
 
-use crate::controller::RunMode;
-pub use crate::diagnostics::EngineTier;
+use std::fmt;
+
+// The three per-host facts the status renderers need: the declared latency,
+// the light model's file stem, and whether a chain state word means "idle".
+// Same values on both hosts (see `win::control` for the Windows side).
+#[cfg(unix)]
+use crate::controller::{LATENCY_SAMPLES, LIGHT_MODEL};
+#[cfg(unix)]
+use crate::pipewire::state_is_idle;
+#[cfg(windows)]
+use crate::win::control::{state_is_idle, LATENCY_SAMPLES, LIGHT_MODEL};
+
+/// Runtime processing mode of the chain-alive states. Ephemeral by design:
+/// never serialized to config — a muted mic must not survive into the next
+/// login unnoticed. Values mirror the plugin's "Mode" control port.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum RunMode {
+    #[default]
+    Suppress,
+    Bypass,
+    Mute,
+}
+
+impl RunMode {
+    /// The plugin's "Mode" control port value.
+    pub fn control_value(&self) -> u8 {
+        match self {
+            RunMode::Suppress => 0,
+            RunMode::Bypass => 1,
+            RunMode::Mute => 2,
+        }
+    }
+}
+
+/// The engine tier the running chain reports (issue #14). The plugin writes
+/// one contract line per transition to stderr (`[dpdfnet-ladspa] engine:
+/// <word> ...`); the tee in `diagnostics` is the only reader, and the atomic
+/// there is the only channel from a `module-filter-chain` plugin to the app.
+/// On Windows the in-process chain reports its tier through the same value.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum EngineTier {
+    Quality,
+    Light,
+    Passthrough,
+}
+
+impl EngineTier {
+    pub fn word(self) -> &'static str {
+        match self {
+            EngineTier::Quality => "quality",
+            EngineTier::Light => "light",
+            EngineTier::Passthrough => "passthrough",
+        }
+    }
+}
+
+/// What the chain runs one model on (issue #18), from the plugin's contract
+/// line `[dpdfnet-ladspa] inference: <engine>[ (<reason>)] for <model>`,
+/// e.g. `native w7a8 avx2` or `onnx (native weights not installed (...))`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Inference {
+    pub model: String,
+    pub engine: String,
+    /// Why ONNX runs; None for a native engine.
+    pub reason: Option<String>,
+}
+
+impl fmt::Display for Inference {
+    /// The plugin's own wording, without the head.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.reason {
+            Some(r) => write!(f, "{} ({r}) for {}", self.engine, self.model),
+            None => write!(f, "{} for {}", self.engine, self.model),
+        }
+    }
+}
 
 /// A validated control request. `SetMode(None)` = Off (the persisted
 /// disable path, exactly like the tray radio).
@@ -181,7 +260,7 @@ pub struct Status {
     /// What the model on the live tier runs on (issue #18), see
     /// [`live_model`]; None before the plugin said so, in passthrough, or
     /// with the chain down.
-    pub inference: Option<crate::diagnostics::Inference>,
+    pub inference: Option<Inference>,
 }
 
 /// The model file the live tier runs: the chain's own model, or the light
@@ -194,7 +273,7 @@ pub fn live_model(
     match tier {
         Some(EngineTier::Passthrough) => None,
         Some(EngineTier::Light) if !configured_light => {
-            Some(crate::controller::LIGHT_MODEL.to_string())
+            Some(LIGHT_MODEL.to_string())
         }
         _ => Some(chain_model.to_string()),
     }
@@ -205,7 +284,7 @@ pub fn live_model(
 fn engine_words(
     tier: EngineTier,
     configured_light: bool,
-    inference: Option<&crate::diagnostics::Inference>,
+    inference: Option<&Inference>,
 ) -> String {
     let (base, note) = match tier {
         EngineTier::Quality => ("quality model", None),
@@ -244,7 +323,7 @@ pub fn render_status_human(s: &Status) -> String {
         "not running"
     } else {
         match (s.node_present, s.node_state.as_deref()) {
-            (Some(true), Some(st)) if crate::pipewire::state_is_idle(st) => {
+            (Some(true), Some(st)) if state_is_idle(st) => {
                 "running, idle (not processing audio right now)"
             }
             (Some(true), _) => "running",
@@ -278,7 +357,7 @@ pub fn render_status_human(s: &Status) -> String {
             None => "defaults".to_string(),
         },
         engine,
-        crate::controller::LATENCY_SAMPLES * 1000 / 48_000,
+        LATENCY_SAMPLES * 1000 / 48_000,
         tray_word(s.tray_sni),
         chain
     )
@@ -315,7 +394,7 @@ pub fn render_status_json(s: &Status) -> String {
             "engine": i.engine,
             "reason": i.reason,
         })),
-        "latency_samples": crate::controller::LATENCY_SAMPLES,
+        "latency_samples": LATENCY_SAMPLES,
         "tray": tray_word(s.tray_sni),
         "chain": {
             "running": s.chain_running,
@@ -323,7 +402,7 @@ pub fn render_status_json(s: &Status) -> String {
             "node_state": s.node_state.as_ref().filter(|_| s.chain_running),
             "idle": s.node_state.as_deref()
                 .filter(|_| s.chain_running)
-                .map(crate::pipewire::state_is_idle),
+                .map(state_is_idle),
         },
     })
     .to_string()
@@ -352,10 +431,17 @@ pub fn decode_response(raw: &str) -> (bool, String) {
     }
 }
 
-// --- socket plumbing --------------------------------------------------------
+// --- transport plumbing -----------------------------------------------------
+//
+// The framing above is shared; the transport is not: a Unix socket on Linux
+// (see `spawn_listener`/`client_run`), a named pipe on Windows
+// (`win::control`). Both speak one request line in and one framed reply out.
 
+#[cfg(unix)]
 use std::io::{Read, Write};
+#[cfg(unix)]
 use std::os::unix::net::{UnixListener, UnixStream};
+#[cfg(unix)]
 use std::path::Path;
 use std::sync::mpsc::Sender;
 use std::time::Duration;
@@ -372,19 +458,21 @@ pub struct ControlReq {
     pub written: std::sync::mpsc::Receiver<()>,
 }
 
-/// Per-connection socket I/O budget. A peer that connects and stalls gets
+/// Per-connection I/O budget. A peer that connects and stalls gets
 /// dropped after this, so the (serial) listener can serve the next client.
-const IO_TIMEOUT: Duration = Duration::from_secs(2);
+/// Shared with the Windows pipe server.
+pub(crate) const IO_TIMEOUT: Duration = Duration::from_secs(2);
 /// How long the listener waits for the main loop's reply. A mode change can
 /// legitimately take a couple of seconds (restart fallback); 10 s outlasts
 /// that without letting a wedged loop pile up connections forever.
-const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
+pub(crate) const REPLY_TIMEOUT: Duration = Duration::from_secs(10);
 /// Longest request line we accept; real requests are tens of bytes.
-const MAX_REQUEST: usize = 4096;
+pub(crate) const MAX_REQUEST: usize = 4096;
 
 /// Serve the control socket on a background thread: one request line per
 /// connection, delivered as `ControlReq` into `tx`; exits when the main
 /// loop's receiver is gone.
+#[cfg(unix)]
 pub fn spawn_listener(listener: UnixListener, tx: Sender<ControlReq>) {
     std::thread::spawn(move || {
         for conn in listener.incoming() {
@@ -439,6 +527,7 @@ pub const NO_REPLY: &str = "no reply from HushMic";
 /// `(exit code, output)`; the caller prints the output (stdout on 0,
 /// stderr otherwise) and exits with the code. Usage errors exit 1 without
 /// touching the socket; connect failure is exit 2 ("tray not running").
+#[cfg(unix)]
 pub fn client_run_at(path: &Path, words: &[String]) -> (i32, String) {
     let refs: Vec<&str> = words.iter().map(|s| s.as_str()).collect();
     if let Err(usage) = parse_request(&refs) {
@@ -476,6 +565,7 @@ pub fn client_run_at(path: &Path, words: &[String]) -> (i32, String) {
 /// `client_run_at` on the default socket path, with the same
 /// ownership check the show socket does before connecting (in the /tmp
 /// fallback the predictable path could be squatted by another local user).
+#[cfg(unix)]
 pub fn client_run(words: &[String]) -> (i32, String) {
     use std::os::unix::fs::{FileTypeExt, MetadataExt};
     let path = crate::lock::default_control_socket_path();
@@ -738,8 +828,8 @@ mod tests {
         }
     }
 
-    fn inference(engine: &str, reason: Option<&str>) -> crate::diagnostics::Inference {
-        crate::diagnostics::Inference {
+    fn inference(engine: &str, reason: Option<&str>) -> Inference {
+        Inference {
             model: "dpdfnet8_48khz_hr".into(),
             engine: engine.into(),
             reason: reason.map(str::to_string),
@@ -780,7 +870,7 @@ mod tests {
     #[test]
     fn the_live_model_follows_the_tier() {
         let q = "dpdfnet8_48khz_hr";
-        let light = crate::controller::LIGHT_MODEL;
+        let light = LIGHT_MODEL;
         assert_eq!(
             live_model(Some(EngineTier::Quality), q, false).as_deref(),
             Some(q)

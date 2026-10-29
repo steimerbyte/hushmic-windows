@@ -43,14 +43,14 @@ files. Ship the model with your app and pass its path to
 `Denoiser::from_file`, or embed it with `include_bytes!` and use
 `Denoiser::from_memory`.
 
-**ONNX Runtime.** By default the crate loads `libonnxruntime.so` at runtime,
-resolved in this order:
+**ONNX Runtime.** By default the crate loads `libonnxruntime.so` at runtime
+(`onnxruntime.dll` on Windows), resolved in this order:
 
 1. `init_runtime(path)`, for apps that bundle their own copy. Call it before
    creating the first `Denoiser`; watch for `RuntimeInit::AlreadyInitialized`
    if other code in your process also uses ONNX Runtime.
 2. The `ORT_DYLIB_PATH` environment variable (empty counts as unset).
-3. The bare soname `libonnxruntime.so`: a copy next to your executable wins,
+3. The bare soname `libonnxruntime.so` (`onnxruntime.dll` on Windows): a copy next to your executable wins,
    then the normal dynamic linker search, which finds a distro package.
 
 ONNX Runtime 1.18 or newer works (the crate uses API version 18). Once a

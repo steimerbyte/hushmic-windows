@@ -1,22 +1,38 @@
+// The tray is the product on Windows: a console subsystem would pop a console
+// window on every launch (and closing it would kill the app), while stderr
+// stays visible when the EXE is started from a terminal.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+#[cfg(unix)]
 use hushmic::abtest::types::{LaunchGate, LAUNCH_ENV};
 use hushmic::config::Config;
 use hushmic::control;
+#[cfg(unix)]
 use hushmic::controller::{self, Controller, Paths, RunMode};
+#[cfg(unix)]
 use hushmic::notify::{self, FailureGate, Slot};
+#[cfg(unix)]
 use hushmic::pipewire;
 use hushmic::tr;
+#[cfg(unix)]
 use hushmic::tray::{HushMicTray, TrayCmd, TrayStatus};
+#[cfg(unix)]
 use hushmic::traylink::{self, TrayLink};
+#[cfg(unix)]
 use hushmic::{autostart, lock, mictest, shortcuts, watchdog};
+#[cfg(unix)]
 use std::io::Read;
+#[cfg(unix)]
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc;
+#[cfg(unix)]
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 /// Unifies the event sources (tray commands, watchdog ticks, mic-test
 /// completion, termination signals) into one channel so the main loop is
 /// single-threaded and owns the `Controller`.
+#[cfg(unix)]
 enum Event {
     Cmd(TrayCmd),
     Tick,
@@ -38,6 +54,7 @@ enum Event {
 
 /// Notification summary for enable/watchdog failures (the body carries the
 /// actionable enable() error).
+#[cfg(unix)]
 fn fail_summary() -> String {
     tr!("notify-chain-failed-summary")
 }
@@ -51,12 +68,14 @@ const STARTUP_GRACE_SECS: u64 = 3;
 /// The budget for `hushmic status` to re-read an idle chain's state on the
 /// main loop. pw-dump answers in tens of ms; past this the reading is
 /// unknown and the status line says plain `running`.
+#[cfg(unix)]
 const STATUS_PROBE_BUDGET: Duration = Duration::from_millis(500);
 
 /// One extra Tick shortly after a chain spawn. The 5 s watchdog cadence is
 /// the wrong clock for healing a capture stream that another audio tool
 /// re-routed at creation (issue #5: EasyEffects) — without this the A/B
 /// window sits on its connecting overlay for most of a tick.
+#[cfg(unix)]
 fn schedule_early_tick(tx: &mpsc::Sender<Event>) {
     let tx = tx.clone();
     std::thread::spawn(move || {
@@ -65,6 +84,7 @@ fn schedule_early_tick(tx: &mpsc::Sender<Event>) {
     });
 }
 
+#[cfg(unix)]
 fn compute_status(
     cfg: &Config,
     controller: &mut Controller,
@@ -95,6 +115,7 @@ fn compute_status(
 /// For a plain launch (`forward_show`) the held lock is not an error but a
 /// "show yourself": ping the running instance's show socket so the app-menu
 /// click still ends in a visible window, then bow out.
+#[cfg(unix)]
 fn acquire_single_instance(forward_show: bool) -> std::fs::File {
     match lock::try_lock(&lock::default_lock_path()) {
         Ok(Some(f)) => f,
@@ -125,8 +146,10 @@ fn acquire_single_instance(forward_show: bool) -> std::fs::File {
 // The handler is async-signal-safe (a single write(2) to a pre-created pipe);
 // a watcher thread turns the byte into an `Event::Shutdown`.
 
+#[cfg(unix)]
 static SHUTDOWN_FD: AtomicI32 = AtomicI32::new(-1);
 
+#[cfg(unix)]
 extern "C" fn on_term_signal(_sig: libc::c_int) {
     // signal-safety(7): write(2) may set errno (e.g. EPIPE once the watcher
     // thread has closed the read end); save/restore it so a signal landing
@@ -144,6 +167,7 @@ extern "C" fn on_term_signal(_sig: libc::c_int) {
 
 /// Install SIGTERM/SIGINT/SIGHUP handlers writing to a self-pipe; returns the
 /// read end (None if installation failed — teardown then relies on Drop only).
+#[cfg(unix)]
 fn install_signal_handlers() -> Option<std::fs::File> {
     use std::os::unix::io::FromRawFd;
     let mut fds = [0i32; 2];
@@ -170,6 +194,7 @@ fn install_signal_handlers() -> Option<std::fs::File> {
 }
 
 /// Block until a termination signal arrives (used by --enable-once).
+#[cfg(unix)]
 fn wait_for_shutdown(pipe: Option<std::fs::File>) {
     match pipe {
         Some(mut p) => {
@@ -189,6 +214,7 @@ fn wait_for_shutdown(pipe: Option<std::fs::File>) {
 /// without it the raw node came out empty and the window showed a misleading
 /// "no microphone detected" even though a real mic exists. An empty raw node
 /// (nothing resolves at all) still opens the no-device overlay.
+#[cfg(unix)]
 fn resolve_ab_nodes() -> (String, String) {
     let cfg = Config::load();
     let traced = pipewire::pw_dump()
@@ -204,6 +230,7 @@ fn resolve_ab_nodes() -> (String, String) {
 /// show a dead device, and an About window has nothing to be about.
 /// MUST be called from the main thread (PR_SET_PDEATHSIG is thread-scoped).
 /// `env` overlays display variables from a forwarded show request.
+#[cfg(unix)]
 fn spawn_child_window(
     mode_flag: &str,
     env: &[(String, String)],
@@ -227,6 +254,7 @@ fn spawn_child_window(
 }
 
 /// The spawned A/B test window child (PDEATHSIG-bound to the tray).
+#[cfg(unix)]
 struct AbWindow {
     child: std::process::Child,
     spawned: Instant,
@@ -246,6 +274,7 @@ struct AbWindow {
 /// output), except the off→on switch a suppression-off launch window is
 /// waiting for: that window was opened without a chain, and its backend
 /// picks the new nodes up by itself. Pure.
+#[cfg(unix)]
 fn closes_ab_window(mutates_chain: bool, off_to_on: bool, awaits_suppression: bool) -> bool {
     mutates_chain && !(off_to_on && awaits_suppression)
 }
@@ -253,6 +282,7 @@ fn closes_ab_window(mutates_chain: bool, off_to_on: bool, awaits_suppression: bo
 /// SIGTERM a still-live A/B window child, reap it, and sweep the transient
 /// WAVs its detached backend may not get to delete. Its pw children die via
 /// PDEATHSIG. No-op on an already-exited (or absent) child.
+#[cfg(unix)]
 fn close_ab_window(ab_window: &mut Option<AbWindow>) {
     if let Some(AbWindow { child, .. }) = ab_window.as_mut() {
         if matches!(child.try_wait(), Ok(None)) {
@@ -269,6 +299,7 @@ fn close_ab_window(ab_window: &mut Option<AbWindow>) {
 /// The notification-driven mic test (record 10 s, play both takes): the
 /// fallback when the A/B window cannot run, and self-announcing via
 /// notifications so an unexpected fallback is not confusing.
+#[cfg(unix)]
 fn start_fallback_mictest(
     cfg: &Config,
     testing: &mut bool,
@@ -318,6 +349,7 @@ fn start_fallback_mictest(
 /// Client-side verbs. `config`/`devices` never exit 2: without a daemon
 /// they read/write the file (a daemon starting in the same instant wins
 /// with its first save — accepted, documented). `service` is purely local.
+#[cfg(unix)]
 fn cli_dispatch(args: &[String]) -> (i32, String) {
     use hushmic::config_cli;
     let words: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
@@ -428,6 +460,7 @@ fn cli_dispatch(args: &[String]) -> (i32, String) {
 /// same: a bad setting is visible, not silently reverted). Every error
 /// (autostart entry, chain restart, save) is reported, joined with "; ".
 #[allow(clippy::too_many_arguments)]
+#[cfg(unix)]
 fn apply_config(
     cfg: &mut Config,
     new: Config,
@@ -489,8 +522,10 @@ fn apply_config(
 /// on the light model by configuration, which decides whether a reported
 /// `light` reads as a fallback. They travel together because the title and
 /// the model menu read both.
+#[cfg(unix)]
 type EngineView = (Option<hushmic::diagnostics::EngineTier>, bool);
 
+#[cfg(unix)]
 fn engine_view(controller: &mut Controller) -> EngineView {
     if controller.is_running() {
         (
@@ -509,8 +544,10 @@ fn engine_view(controller: &mut Controller) -> EngineView {
 /// remembered as delivered, or a tray that registers later shows the
 /// state from before it existed until the tier happens to change again.
 #[derive(Default)]
+#[cfg(unix)]
 struct EngineCache(Option<EngineView>);
 
+#[cfg(unix)]
 impl EngineCache {
     /// Push the engine fields when they differ from what the tray shows.
     /// `send` reports whether the update reached a tray.
@@ -528,6 +565,7 @@ impl EngineCache {
 
 /// `(mic, device)`: the device a start would take its settings from, and
 /// the configured `mic` it was resolved for.
+#[cfg(unix)]
 type TargetCache = Option<(Option<String>, Option<String>)>;
 
 /// The device whose model and strength the tray, `status` and edits refer
@@ -535,6 +573,7 @@ type TargetCache = Option<(Option<String>, Option<String>)>;
 /// a start would pick — from the cache the Tick keeps while no chain runs,
 /// probed only when that is missing or was resolved for another `mic`.
 /// None = no device (the defaults).
+#[cfg(unix)]
 fn settings_device(
     cfg: &Config,
     controller: &Controller,
@@ -554,6 +593,7 @@ fn settings_device(
 }
 
 /// A device's display name from the tray's mic list.
+#[cfg(unix)]
 fn device_name<'a>(mics: &'a [pipewire::Source], device: Option<&str>) -> Option<&'a str> {
     device.and_then(|d| pipewire::description_of(mics, d))
 }
@@ -562,6 +602,7 @@ fn device_name<'a>(mics: &'a [pipewire::Source], device: Option<&str>) -> Option
 /// snapshot refreshes the mic list and the node probe, and the tray gets
 /// the full state. The one place the post-change tray closure lives.
 #[allow(clippy::too_many_arguments)]
+#[cfg(unix)]
 fn refresh_tray(
     handle: &TrayLink,
     cfg: &Config,
@@ -618,6 +659,7 @@ fn refresh_tray(
     engine.record(engine_now, landed);
 }
 
+#[cfg(unix)]
 fn usage_text() -> String {
     "usage: hushmic                 start the tray and open the A/B window
                                (an already-running instance opens it instead)
@@ -648,6 +690,7 @@ exit codes: 0 ok, 1 usage/failed, 2 not running (control commands only)
     .to_string()
 }
 
+#[cfg(unix)]
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if matches!(args.first().map(|s| s.as_str()), Some("--help" | "-h")) && args.len() == 1 {
@@ -2362,7 +2405,7 @@ fn main() {
     mictest::remove_recordings();
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use super::{EngineCache, EngineView};
     use hushmic::diagnostics::EngineTier;
@@ -2453,4 +2496,993 @@ mod tests {
         });
         assert_eq!(sent, 1);
     }
+}
+
+// --- Windows entry point ----------------------------------------------------
+//
+// Same CLI surface, same exit codes (0 ok, 1 failed/usage, 2 not running).
+// Windows has no audio server to configure: this process IS the audio host
+// (`win::chain`), so the loop below owns an in-process chain where the Linux
+// loop owns a `pipewire -c` child, and the control channel is a per-user
+// named pipe instead of a Unix socket.
+
+#[cfg(windows)]
+use hushmic::control::RunMode;
+#[cfg(windows)]
+use hushmic::win::chain::{self, Chain};
+#[cfg(windows)]
+use hushmic::win::shell::{self, MenuItem, Shell, ShellEvent, TrayState};
+
+/// The watchdog beat: the same 5 s cadence as `watchdog::spawn(_, 5)`.
+#[cfg(windows)]
+const TICK_SECS: u64 = 5;
+
+/// Recovery needs two consecutive bad verdicts, then stays quiet for six
+/// ticks (30 s): the Linux `watchdog::{DEBOUNCE_TICKS, SWITCH_COOLDOWN_TICKS}`
+/// numbers, which are private to that Linux-only module. A restart is an
+/// audible gap, so it must never become a restart storm.
+#[cfg(windows)]
+const RECOVERY_DEBOUNCE_TICKS: u32 = 2;
+#[cfg(windows)]
+const RECOVERY_COOLDOWN_TICKS: u32 = 6;
+
+/// How often the tray queue is drained while nothing else happens. The shell
+/// lives on this thread (its window pump is its own thread), so its queue
+/// cannot be polled from a worker.
+#[cfg(windows)]
+const TRAY_POLL_MS: u64 = 25;
+
+/// One tick of the recovery state machine: `needs_restart` is `None` when the
+/// tick could not tell (device probe failed, startup grace).
+#[cfg(windows)]
+#[derive(Default)]
+struct Recovery {
+    pending: u32,
+    cooldown: u32,
+}
+
+#[cfg(windows)]
+impl Recovery {
+    /// `true` = restart the chain now.
+    fn observe(&mut self, needs_restart: Option<bool>) -> bool {
+        let cooling = self.cooldown > 0;
+        if cooling {
+            self.cooldown -= 1;
+        }
+        if needs_restart == Some(true) && !cooling {
+            self.pending += 1;
+        } else {
+            self.pending = 0;
+        }
+        if self.pending >= RECOVERY_DEBOUNCE_TICKS {
+            self.pending = 0;
+            self.cooldown = RECOVERY_COOLDOWN_TICKS;
+            return true;
+        }
+        false
+    }
+}
+
+/// The Windows event sources: control pipe, watchdog beat, tray/hotkeys, the
+/// "show yourself" ping of a second launch, and console control events.
+#[cfg(windows)]
+enum WinEvent {
+    Control(control::ControlReq),
+    Tick,
+    Shell(ShellEvent),
+    Show,
+    Shutdown,
+}
+
+#[cfg(windows)]
+static CTRL_TX: std::sync::OnceLock<mpsc::Sender<WinEvent>> = std::sync::OnceLock::new();
+
+/// Ctrl-C, Ctrl-Break and a closed console must take the orderly path
+/// (chain stopped, devices released) — what the Linux self-pipe handler for
+/// SIGINT/SIGTERM does.
+#[cfg(windows)]
+fn install_ctrl_handler(tx: mpsc::Sender<WinEvent>) {
+    let _ = CTRL_TX.set(tx);
+    // SAFETY: the handler only sends on a channel (console handlers run on
+    // their own thread, so unlike an async signal handler it may allocate).
+    if let Err(e) = unsafe {
+        windows::Win32::System::Console::SetConsoleCtrlHandler(Some(on_ctrl), true)
+    } {
+        eprintln!("hushmic: cannot catch Ctrl-C ({e})");
+    }
+}
+
+#[cfg(windows)]
+unsafe extern "system" fn on_ctrl(_ctrl: u32) -> windows::core::BOOL {
+    if let Some(tx) = CTRL_TX.get() {
+        let _ = tx.send(WinEvent::Shutdown);
+    }
+    windows::core::BOOL(1) // handled: no default termination
+}
+
+/// The embedded 48 px tray icon as PNG bytes — what `Shell::start` wants.
+/// `branding::tray_icon_rgba` ships 22 px and 48 px; the small-shell icon is
+/// scaled from the large one by `Shell` itself.
+#[cfg(windows)]
+fn tray_icon_png() -> Option<Vec<u8>> {
+    let (w, h, rgba) = hushmic::branding::tray_icon_rgba("hushmic-tray").pop()?;
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, w, h);
+        enc.set_color(png::ColorType::Rgba);
+        enc.set_depth(png::BitDepth::Eight);
+        enc.write_header().ok()?.write_image_data(&rgba).ok()?;
+    }
+    Some(out)
+}
+
+/// Start the chain and re-apply the remembered mode: `Chain` always begins in
+/// Suppress, so a watchdog restart must not silently un-mute the user.
+#[cfg(windows)]
+fn respawn(cfg: &Config, mode: RunMode) -> Result<Chain, String> {
+    let sink = std::env::var("HUSHMIC_SINK").ok().filter(|s| !s.is_empty());
+    let chain = Chain::start_with(cfg, sink.as_deref())?;
+    chain.set_mode(mode);
+    Ok(chain)
+}
+
+/// The tray face. `Error` covers "enabled but the pump is down"; there is no
+/// separate node to probe — the pump IS the virtual microphone.
+#[cfg(windows)]
+fn win_state(cfg: &Config, chain: Option<&Chain>, mode: RunMode) -> TrayState {
+    if !cfg.enabled {
+        TrayState::Off
+    } else if chain.is_some_and(Chain::running) {
+        match mode {
+            RunMode::Suppress => TrayState::On,
+            RunMode::Bypass => TrayState::Bypass,
+            RunMode::Mute => TrayState::Mute,
+        }
+    } else {
+        TrayState::Error
+    }
+}
+
+/// The capture device the pump uses (`Chain::describe` = `<capture> -> <render>`).
+#[cfg(windows)]
+fn chain_capture(chain: &Chain) -> Option<String> {
+    chain
+        .describe()
+        .split(" -> ")
+        .next()
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+}
+
+#[cfg(windows)]
+fn win_status(cfg: &Config, chain: Option<&Chain>, mode: RunMode, tray: bool) -> control::Status {
+    let profile = cfg.profile_for(cfg.mic.as_deref());
+    let saved = profile.device.clone().filter(|_| profile.saved);
+    let running = chain.is_some_and(Chain::running);
+    let active = chain.and_then(chain_capture);
+    control::Status {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        mode: cfg.enabled.then_some(mode),
+        mic_configured: cfg.mic.clone(),
+        mic_active: active.clone(),
+        fallback_active: cfg.enabled
+            && cfg.mic.is_some()
+            && running
+            && active.as_deref() != cfg.mic.as_deref(),
+        model: profile.model.clone(),
+        attn_limit: profile.attn_limit,
+        profile_name: saved.clone(),
+        profile: saved,
+        defaults_model: cfg.model.clone(),
+        defaults_attn_limit: cfg.attn_limit,
+        chain_running: running,
+        node_present: running.then_some(true),
+        node_state: None,
+        tray_sni: tray,
+        engine: None,
+        configured_light: cfg.model == hushmic::win::control::LIGHT_MODEL,
+        inference: None,
+    }
+}
+
+/// Apply a mode selection (tray radio, hotkey, `mode`, `toggle`). `None` is
+/// Off: the persisted disable path, exactly the Linux `SetMode(None)`.
+#[cfg(windows)]
+fn set_mode(
+    cfg: &mut Config,
+    chain: &mut Option<Chain>,
+    mode: &mut RunMode,
+    sel: Option<RunMode>,
+    started: &mut Instant,
+) -> Result<(), String> {
+    let was_enabled = cfg.enabled;
+    let mut errors: Vec<String> = Vec::new();
+    match sel {
+        None => {
+            cfg.enabled = false;
+            if let Some(mut c) = chain.take() {
+                c.stop();
+            }
+        }
+        Some(sel) => {
+            *mode = sel;
+            cfg.enabled = true;
+            match chain.as_ref() {
+                Some(c) => c.set_mode(sel),
+                None => match respawn(cfg, sel) {
+                    Ok(c) => {
+                        *chain = Some(c);
+                        *started = Instant::now();
+                    }
+                    Err(e) => errors.push(e),
+                },
+            }
+        }
+    }
+    if cfg.enabled != was_enabled {
+        if let Err(e) = cfg.save() {
+            errors.push(format!("could not write {}: {e}", Config::path().display()));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors.join("; "))
+    }
+}
+
+/// A desktop notification, honouring the `notifications` setting (the switch
+/// `notify::set_enabled` applies to the Linux paths).
+#[cfg(windows)]
+fn say(cfg: &Config, title: &str, body: &str) {
+    if cfg.notifications {
+        let _ = shell::notify(title, body);
+    }
+}
+
+/// Push the tray icon and radio state, once per visible change.
+#[cfg(windows)]
+fn push_face(
+    shell: &Option<Shell>,
+    last: &mut Option<(TrayState, RunMode, bool)>,
+    cfg: &Config,
+    chain: Option<&Chain>,
+    mode: RunMode,
+) {
+    let state = win_state(cfg, chain, mode);
+    let face = (state, mode, cfg.enabled);
+    if last.as_ref() == Some(&face) {
+        return;
+    }
+    *last = Some(face);
+    let Some(s) = shell else { return };
+    s.set_state(
+        state,
+        &format!(
+            "HushMic: {}",
+            control::mode_word(cfg.enabled.then_some(mode))
+        ),
+    );
+    let live = cfg.enabled && chain.is_some_and(Chain::running);
+    s.set_menu_checked(MenuItem::Enable, cfg.enabled);
+    s.set_menu_checked(MenuItem::Bypass, live && mode == RunMode::Bypass);
+    s.set_menu_checked(MenuItem::Mute, live && mode == RunMode::Mute);
+    s.set_menu_checked(MenuItem::SetDefault, cfg.set_default);
+}
+
+/// The Windows half of `cli_dispatch`: the verbs that never need a daemon
+/// plus the same `control::client_run` the Linux build uses.
+#[cfg(windows)]
+fn cli_dispatch_win(args: &[String]) -> (i32, String) {
+    use hushmic::config_cli;
+    let words: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+    match words.as_slice() {
+        ["config", "path"] => return (0, Config::path().display().to_string()),
+        ["devices"] | ["devices", "--json"] => {
+            let json = words.len() == 2;
+            // The running daemon's view when there is one (its config is the
+            // truth while it runs), else the file — as on Linux.
+            let status: Vec<String> = ["status", "--json"].iter().map(|s| s.to_string()).collect();
+            let configured = match hushmic::win::control::client_run(&status) {
+                (0, out) => serde_json::from_str::<serde_json::Value>(&out)
+                    .ok()
+                    .and_then(|v| v["mic"]["configured"].as_str().map(str::to_string)),
+                _ => Config::load().mic,
+            };
+            return match hushmic::win::audio::list_devices() {
+                Ok((captures, _)) => {
+                    let devices: Vec<(&str, Option<&str>)> =
+                        captures.iter().map(|n| (n.as_str(), None)).collect();
+                    (
+                        0,
+                        config_cli::render_device_list(
+                            &devices,
+                            configured.as_deref(),
+                            json,
+                            "is the Windows audio service running?",
+                        ),
+                    )
+                }
+                Err(e) => (1, format!("the microphones could not be listed: {e}")),
+            };
+        }
+        ["devices", ..] => return (1, "usage: hushmic devices [--json]".into()),
+        // No systemd: the Run key is what "start with Windows" means here.
+        ["service", "install"] | ["service", "uninstall"] => {
+            return (
+                1,
+                "systemd units do not exist on Windows; `hushmic config set autostart true` \
+                 installs the login entry in the Windows Run key instead"
+                    .to_string(),
+            )
+        }
+        ["service", ..] => return (1, "usage: hushmic service install|uninstall".into()),
+        _ => {}
+    }
+    let (code, out) = hushmic::win::control::client_run(args);
+    if code != 2 || words.first() != Some(&"config") {
+        return (code, out);
+    }
+    // No daemon: the file is the truth (the Linux offline path).
+    let cfg = Config::load();
+    let device = || config_cli::offline_device(&cfg);
+    let res = match words.as_slice() {
+        ["config"] => config_cli::offline_get(&cfg, None, false, device().as_deref()),
+        ["config", "--json"] => config_cli::offline_get(&cfg, None, true, device().as_deref()),
+        ["config", "get", k] => config_cli::offline_get(&cfg, Some(k), false, device().as_deref()),
+        ["config", "get", k, "--json"] => {
+            config_cli::offline_get(&cfg, Some(k), true, device().as_deref())
+        }
+        ["config", "set", k, rest @ ..] if !rest.is_empty() => chain::model_dir()
+            .and_then(|dir| config_cli::offline_set(k, &rest.join(" "), &dir)),
+        _ => Err(out),
+    };
+    match res {
+        Ok(s) => (0, s),
+        Err(e) => (1, e),
+    }
+}
+
+#[cfg(windows)]
+fn win_usage_text() -> String {
+    format!(
+        "\
+hushmic {} — real-time microphone noise suppression for Windows
+
+usage:
+       hushmic                 run the tray and forward \"show yourself\" to a running instance
+       hushmic --tray          run the tray only
+       hushmic --headless      run without a tray icon (autostart entry)
+       hushmic --enable-once   enable the mic until terminated
+       hushmic --test-window   open the A/B microphone test window
+       hushmic --about         the About window
+       hushmic --version       print the version and install paths
+       hushmic --doctor        print a diagnostics report (exits 1 on problems)
+       hushmic --help          this text
+
+control (talks to the running instance):
+       hushmic status [--json]      what it is doing
+       hushmic mode [STATE]         print or set: suppress|bypass|mute|off
+       hushmic toggle mute|bypass   hotkey-friendly overlay toggle
+       hushmic quit                 stop it
+
+settings (applied live while running, saved to the file otherwise):
+       hushmic config [--json]           every key = value
+       hushmic config get KEY [--json]
+       hushmic config set KEY VALUE
+       hushmic config path
+       hushmic devices [--json]          microphones usable as `mic`
+       hushmic service install|uninstall not available on Windows (use autostart)
+  keys: mic model attn_limit set_default autostart tray tray_icon notifications inference
+
+exit codes: 0 ok, 1 usage/failed, 2 not running (control commands only)
+",
+        env!("CARGO_PKG_VERSION")
+    )
+}
+
+/// Write, ignoring a closed pipe (`hushmic --version | head -1`).
+#[cfg(windows)]
+fn print_out(text: &str, code: i32) -> ! {
+    use std::io::Write;
+    let res = if code == 0 {
+        std::io::stdout().write_all(text.as_bytes())
+    } else {
+        std::io::stderr().write_all(text.as_bytes())
+    };
+    if let Err(e) = res {
+        if e.kind() != std::io::ErrorKind::BrokenPipe {
+            eprintln!("hushmic: cannot write output: {e}");
+        }
+    }
+    std::process::exit(code);
+}
+
+#[cfg(windows)]
+fn main() {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    if matches!(args.first().map(|s| s.as_str()), Some("--help" | "-h")) && args.len() == 1 {
+        print_out(&win_usage_text(), 0);
+    }
+    if matches!(
+        args.first().map(|s| s.as_str()),
+        Some("status" | "mode" | "toggle" | "quit" | "config" | "devices" | "service")
+    ) {
+        let (code, mut out) = cli_dispatch_win(&args);
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        print_out(&out, code);
+    }
+    let tray_mode = args.iter().any(|a| a == "--tray");
+    let headless = args.iter().any(|a| a == "--headless");
+    let enable_once = args.iter().any(|a| a == "--enable-once");
+    let test_window = args.iter().any(|a| a == "--test-window");
+    let about = args.iter().any(|a| a == "--about");
+    let version = args.iter().any(|a| a == "--version");
+    let doctor = args.iter().any(|a| a == "--doctor");
+    const KNOWN_FLAGS: [&str; 7] = [
+        "--tray",
+        "--headless",
+        "--enable-once",
+        "--test-window",
+        "--about",
+        "--version",
+        "--doctor",
+    ];
+    let unrecognized = args.iter().any(|a| !KNOWN_FLAGS.contains(&a.as_str()));
+    let modes = [
+        tray_mode,
+        headless,
+        enable_once,
+        test_window,
+        about,
+        version,
+        doctor,
+    ]
+    .iter()
+    .filter(|m| **m)
+    .count();
+    if unrecognized || modes > 1 {
+        print_out(&win_usage_text(), 2);
+    }
+    let show_mode = modes == 0;
+
+    if version {
+        // `chain::model_dir` is the one asset rule; its error is the only
+        // reason this can fail, so print it where the path would go.
+        let models = chain::model_dir()
+            .map(|d| d.display().to_string())
+            .unwrap_or_else(|e| e);
+        let out = format!(
+            "hushmic {}\nconfig: {}\nmodels: {}\n",
+            env!("CARGO_PKG_VERSION"),
+            Config::path().display(),
+            models
+        );
+        print_out(&out, 0);
+    }
+
+    if doctor {
+        let (text, problems) = hushmic::win::doctor::report();
+        print_out(&text, if problems == 0 { 0 } else { 1 });
+    }
+
+    if about {
+        if let Err(e) = hushmic::about::run() {
+            eprintln!("hushmic: about window failed: {e}");
+            std::process::exit(1);
+        }
+        return;
+    }
+
+    if test_window {
+        // The same window the Linux daemon opens in a child: here a flag-less
+        // launch is a plain daemon, so `--test-window` runs it directly. The
+        // capture endpoint is the configured mic (empty = the system default);
+        // Windows derives the suppressed leg from it, so there is no filtered
+        // node, and no launch blocker applies (see win::abtest::Backend::new).
+        let cfg = Config::load();
+        let mic = cfg.mic.clone().unwrap_or_default();
+        let end = hushmic::abtest::run_window(
+            mic,
+            String::new(),
+            hushmic::abtest::types::LaunchGate::default(),
+        );
+        // The backend thread's own on-close WAV deletion is detached and
+        // races process exit: sweep synchronously before returning, as the
+        // Linux branch does. Idempotent with the backend's own.
+        hushmic::win::abtest::remove_recordings();
+        match end {
+            // `NeedsNewerPipewire` is the Linux pw-cat version floor; the
+            // in-process backend has no such dependency and never reports it.
+            Ok(_) => std::process::exit(0),
+            Err(e) => {
+                eprintln!("hushmic: the A/B window could not start: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+
+    if enable_once {
+        let cfg = Config::load();
+        let mut chain = match respawn(&cfg, RunMode::default()) {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("hushmic: {e}");
+                std::process::exit(1);
+            }
+        };
+        let (tx, rx) = mpsc::channel();
+        install_ctrl_handler(tx);
+        eprintln!("hushmic: enabled; Ctrl-C to stop");
+        let _ = rx.recv();
+        chain.stop();
+        return;
+    }
+
+    // One instance per user: the second launch forwards "show yourself" and
+    // exits 0, exactly like the Linux lock file.
+    match shell::single_instance() {
+        Ok(lock) if !lock.acquired => {
+            if show_mode && hushmic::win::control::request_show() {
+                eprintln!("hushmic is already running; asked it to show itself");
+            } else {
+                eprintln!("hushmic is already running");
+            }
+            std::process::exit(0);
+        }
+        Ok(_lock) => {}
+        Err(e) => {
+            eprintln!("hushmic: cannot take the single-instance lock: {e}");
+            std::process::exit(1);
+        }
+    }
+
+    let code = run_daemon(tray_mode || show_mode, headless);
+    std::process::exit(code);
+}
+
+/// The daemon: control pipe, watchdog, tray and chain, in one event loop.
+#[cfg(windows)]
+fn run_daemon(tray: bool, headless: bool) -> i32 {
+    let (tx, rx) = mpsc::channel::<WinEvent>();
+    install_ctrl_handler(tx.clone());
+
+    // The control pipe goes up first: a `hushmic mode mute` racing the start
+    // must queue behind us, not exit 2.
+    {
+        let (ctl_tx, ctl_rx) = mpsc::channel::<control::ControlReq>();
+        hushmic::win::control::spawn_listener(ctl_tx);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for req in ctl_rx {
+                if tx.send(WinEvent::Control(req)).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    {
+        let (show_tx, show_rx) = mpsc::channel::<()>();
+        hushmic::win::control::spawn_show_listener(show_tx);
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            for () in show_rx {
+                if tx.send(WinEvent::Show).is_err() {
+                    break;
+                }
+            }
+        });
+    }
+    {
+        let tx = tx.clone();
+        std::thread::spawn(move || loop {
+            std::thread::sleep(Duration::from_secs(TICK_SECS));
+            if tx.send(WinEvent::Tick).is_err() {
+                return;
+            }
+        });
+    }
+
+    let mut cfg = Config::load();
+    let shell = if tray {
+        let icon = tray_icon_png()
+            .ok_or_else(|| "the embedded tray icon could not be decoded".to_string())
+            .and_then(|png| Shell::start(&png));
+        match icon {
+            Ok(s) => {
+                for w in s.hotkey_warnings() {
+                    eprintln!("hushmic: {w}");
+                }
+                Some(s)
+            }
+            Err(e) => {
+                eprintln!("hushmic: no tray icon ({e}); control it from a terminal");
+                None
+            }
+        }
+    } else {
+        None
+    };
+
+    let mut mode = RunMode::default();
+    let mut prev_alive = RunMode::Suppress;
+    let mut chain: Option<Chain> = None;
+    let mut started = Instant::now();
+    if cfg.enabled {
+        match respawn(&cfg, mode) {
+            Ok(c) => {
+                chain = Some(c);
+                started = Instant::now();
+            }
+            Err(e) => {
+                eprintln!("hushmic: {e}");
+                say(&cfg, &tr!("notify-chain-failed-summary"), &e);
+            }
+        }
+    }
+    let mut recovery = Recovery::default();
+    let mut last_face: Option<(TrayState, RunMode, bool)> = None;
+    push_face(&shell, &mut last_face, &cfg, chain.as_ref(), mode);
+
+    loop {
+        if let Some(s) = &shell {
+            while let Some(ev) = s.poll() {
+                if tx.send(WinEvent::Shell(ev)).is_err() {
+                    break;
+                }
+            }
+        }
+        let ev = match rx.recv_timeout(Duration::from_millis(TRAY_POLL_MS)) {
+            Ok(ev) => ev,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
+        match ev {
+            WinEvent::Control(req) => {
+                let words: Vec<&str> = req.line.split_whitespace().collect();
+                let request = match control::parse_request(&words) {
+                    Ok(r) => r,
+                    Err(msg) => {
+                        let _ = req.reply.send(control::encode_err(&msg));
+                        continue;
+                    }
+                };
+                match request {
+                    control::Request::GetMode => {
+                        let cur = cfg.enabled.then_some(mode);
+                        let _ = req.reply.send(control::encode_ok(control::mode_word(cur)));
+                    }
+                    control::Request::Status { json } => {
+                        let s = win_status(&cfg, chain.as_ref(), mode, shell.is_some());
+                        let payload = if json {
+                            control::render_status_json(&s)
+                        } else {
+                            control::render_status_human(&s)
+                        };
+                        let _ = req.reply.send(control::encode_ok(&payload));
+                    }
+                    control::Request::Quit => {
+                        let _ = req.reply.send(control::encode_ok("stopping"));
+                        let _ = req.written.recv_timeout(Duration::from_secs(2));
+                        break;
+                    }
+                    control::Request::ConfigGet { key, json } => {
+                        let device = hushmic::config_cli::offline_device(&cfg);
+                        let msg = match hushmic::config_cli::offline_get(
+                            &cfg,
+                            key.as_deref(),
+                            json,
+                            device.as_deref(),
+                        ) {
+                            Ok(s) => control::encode_ok(&s),
+                            Err(e) => control::encode_err(&e),
+                        };
+                        let _ = req.reply.send(msg);
+                    }
+                    control::Request::ConfigSet { key, value } => {
+                        use hushmic::config_cli as cc;
+                        let value = control::config_set_value(&req.line).unwrap_or(value);
+                        let model_dir = match chain::model_dir() {
+                            Ok(dir) => dir,
+                            Err(e) => {
+                                let _ = req.reply.send(control::encode_err(&e));
+                                continue;
+                            }
+                        };
+                        let parsed = cc::parse_settable_key(&key)
+                            .and_then(|k| cc::parse_value(k, &value, &model_dir).map(|v| (k, v)));
+                        let (k, v) = match parsed {
+                            Ok(kv) => kv,
+                            Err(e) => {
+                                let _ = req.reply.send(control::encode_err(&e));
+                                continue;
+                            }
+                        };
+                        let device = cc::offline_device(&cfg);
+                        let mut new = cfg.clone();
+                        cc::apply(&mut new, k, v, device.as_deref());
+                        let restart = cc::diff(&cfg, &new).chain || new.mic != cfg.mic;
+                        cfg = new;
+                        let mut errors: Vec<String> = Vec::new();
+                        if let Err(e) = cfg.save() {
+                            errors.push(format!(
+                                "could not write {}: {e}",
+                                Config::path().display()
+                            ));
+                        }
+                        if k == cc::Key::Autostart {
+                            if let Err(e) = shell::set_autostart(cfg.autostart) {
+                                errors.push(format!(
+                                    "saved, but the login entry could not be written: {e}"
+                                ));
+                            }
+                        }
+                        if restart && cfg.enabled {
+                            if let Some(mut c) = chain.take() {
+                                c.stop();
+                            }
+                            match respawn(&cfg, mode) {
+                                Ok(c) => {
+                                    chain = Some(c);
+                                    started = Instant::now();
+                                }
+                                Err(e) => errors.push(e),
+                            }
+                        }
+                        let mut line = format!(
+                            "{} = {}{}",
+                            k.name(),
+                            cc::get(&cfg, k, device.as_deref()),
+                            cc::set_qualifier(k, true)
+                        );
+                        if matches!(k, cc::Key::Tray | cc::Key::TrayIcon) && headless {
+                            line.push_str(" (--headless ignores it)");
+                        }
+                        if !errors.is_empty() {
+                            line.push_str(&format!("; {}", errors.join("; ")));
+                        }
+                        let msg = if errors.is_empty() {
+                            control::encode_ok(&line)
+                        } else {
+                            control::encode_err(&line)
+                        };
+                        let _ = req.reply.send(msg);
+                        last_face = None; // force the tray to re-assert
+                    }
+                    control::Request::SetMode(sel) => {
+                        let cur = cfg.enabled.then_some(mode);
+                        let res = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started);
+                        prev_alive = control::update_prev_alive(prev_alive, cur, sel);
+                        let msg = match res {
+                            Ok(()) => control::encode_ok(control::mode_word(sel)),
+                            Err(e) => control::encode_err(&e),
+                        };
+                        let _ = req.reply.send(msg);
+                        last_face = None;
+                    }
+                    control::Request::Toggle(target) => {
+                        let cur = cfg.enabled.then_some(mode);
+                        let sel = control::toggle_next(cur, prev_alive, target);
+                        let res = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started);
+                        prev_alive = control::update_prev_alive(prev_alive, cur, sel);
+                        let msg = match res {
+                            Ok(()) => control::encode_ok(control::mode_word(sel)),
+                            Err(e) => control::encode_err(&e),
+                        };
+                        let _ = req.reply.send(msg);
+                        last_face = None;
+                    }
+                }
+            }
+            WinEvent::Shell(ev) => {
+                let item = match ev {
+                    // The icon click is the global on/off toggle, so it maps
+                    // to the Enable row's action.
+                    ShellEvent::Tray(item) | ShellEvent::Toggle(item) => item,
+                    ShellEvent::Hotkey { key, pressed } => {
+                        use hushmic::win::shell::Hotkey as H;
+                        // Linux's intent: the taps flip mute/bypass against
+                        // suppression on the press, the holds apply while held.
+                        let cur = cfg.enabled.then_some(mode);
+                        if matches!(key, H::ToggleMute | H::ToggleBypass) && !pressed {
+                            continue;
+                        }
+                        let sel = Some(match key {
+                            H::ToggleMute if cur == Some(RunMode::Mute) => RunMode::Suppress,
+                            H::ToggleMute => RunMode::Mute,
+                            H::ToggleBypass if cur == Some(RunMode::Bypass) => RunMode::Suppress,
+                            H::ToggleBypass => RunMode::Bypass,
+                            H::PushToTalk if pressed => RunMode::Suppress,
+                            // Released PTT stops transmitting instead of
+                            // passing the raw mic through.
+                            H::PushToTalk => RunMode::Mute,
+                            H::PushToMute if pressed => RunMode::Mute,
+                            H::PushToMute => RunMode::Suppress,
+                        });
+                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started) {
+                            eprintln!("hushmic: {e}");
+                        }
+                        prev_alive = control::update_prev_alive(prev_alive, cur, sel);
+                        last_face = None;
+                        continue;
+                    }
+                };
+                match item {
+                    MenuItem::Enable => {
+                        let cur = cfg.enabled.then_some(mode);
+                        let sel = if cfg.enabled { None } else { Some(mode) };
+                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started) {
+                            eprintln!("hushmic: {e}");
+                        }
+                        prev_alive = control::update_prev_alive(prev_alive, cur, sel);
+                    }
+                    MenuItem::Bypass => {
+                        let next = if mode == RunMode::Bypass {
+                            RunMode::Suppress
+                        } else {
+                            RunMode::Bypass
+                        };
+                        let cur = cfg.enabled.then_some(mode);
+                        if let Err(e) =
+                            set_mode(&mut cfg, &mut chain, &mut mode, Some(next), &mut started)
+                        {
+                            eprintln!("hushmic: {e}");
+                        }
+                        prev_alive = control::update_prev_alive(prev_alive, cur, Some(next));
+                    }
+                    MenuItem::Mute => {
+                        let next = if mode == RunMode::Mute && cfg.enabled {
+                            RunMode::Suppress
+                        } else {
+                            RunMode::Mute
+                        };
+                        let cur = cfg.enabled.then_some(mode);
+                        if let Err(e) =
+                            set_mode(&mut cfg, &mut chain, &mut mode, Some(next), &mut started)
+                        {
+                            eprintln!("hushmic: {e}");
+                        }
+                        prev_alive = control::update_prev_alive(prev_alive, cur, Some(next));
+                    }
+                    // Windows has no API to take the default microphone
+                    // (see win-port-wave2): say what the user must select.
+                    MenuItem::SetDefault => {
+                        eprintln!(
+                            "hushmic: select \"CABLE Output\" as the default microphone in Windows sound settings"
+                        );
+                        say(
+                            &cfg,
+                            "HushMic",
+                            "Select \"CABLE Output\" as the default microphone in Windows sound settings.",
+                        );
+                    }
+                    MenuItem::MicTest => {
+                        // Linux parity: the window runs in its own process
+                        // (the tray stays responsive; the single-instance
+                        // guard only covers the daemon).
+                        match hushmic::win::abtest::spawn_window() {
+                            Ok(pid) => eprintln!("hushmic: A/B window opened (pid {pid})"),
+                            Err(e) => {
+                                // Same fallback as Linux: without a window the
+                                // audio-only test still works.
+                                eprintln!("hushmic: could not open the test window: {e}");
+                                let mic = cfg.mic.clone().unwrap_or_default();
+                                let say_cfg = cfg.clone();
+                                std::thread::spawn(move || {
+                                    let say_fn = |title: &str, body: &str| {
+                                        say(&say_cfg, title, body)
+                                    };
+                                    let title = tr!("notify-mictest-title");
+                                    match hushmic::win::mictest::run(&mic, &say_fn) {
+                                        Ok(summary) => say_fn(&title, &summary),
+                                        Err(e) => {
+                                            say_fn(&tr!("notify-mictest-failed-title"), &e)
+                                        }
+                                    }
+                                });
+                            }
+                        }
+                    }
+                    MenuItem::Settings => {
+                        // Linux has no Settings window: its settings are
+                        // submenus of the tray menu. This tray carries the
+                        // mode switches; everything else is the config file,
+                        // which `hushmic config` reads and writes live.
+                        eprintln!(
+                            "hushmic: settings are edited with `hushmic config set KEY VALUE` \
+                             (run `hushmic config` to list them)"
+                        );
+                        say(
+                            &cfg,
+                            "HushMic",
+                            "Settings: run `hushmic config` to list them and \"hushmic config \
+                             set KEY VALUE\" to change one.",
+                        );
+                    }
+                    MenuItem::About => {
+                        if let Err(e) = hushmic::about::run() {
+                            eprintln!("hushmic: about window failed: {e}");
+                        }
+                    }
+                    MenuItem::Quit => break,
+                }
+                last_face = None;
+            }
+            WinEvent::Tick => {
+                let in_grace = started.elapsed() < Duration::from_secs(STARTUP_GRACE_SECS);
+                let verdict = if !cfg.enabled {
+                    Some(false)
+                } else if !chain.as_ref().is_some_and(Chain::running) {
+                    Some(true)
+                } else if in_grace {
+                    None
+                } else {
+                    // The configured mic came back: it is a live capture
+                    // device again, but the pump is following another one.
+                    match cfg.mic.as_deref() {
+                        None => Some(false),
+                        // Gone: the chain already follows the default, and a
+                        // failed probe must never trigger a restart.
+                        Some(mic) => match mic_live(mic) {
+                            Some(false) | None => Some(false),
+                            Some(true) => {
+                                let on_preferred = chain
+                                    .as_ref()
+                                    .and_then(chain_capture)
+                                    .is_some_and(|c| c.to_lowercase().contains(&mic.to_lowercase()));
+                                Some(!on_preferred)
+                            }
+                        },
+                    }
+                };
+                if recovery.observe(verdict) {
+                    if let Some(mut c) = chain.take() {
+                        c.stop();
+                    }
+                    match respawn(&cfg, mode) {
+                        Ok(c) => {
+                            chain = Some(c);
+                            started = Instant::now();
+                            say(
+                                &cfg,
+                                &tr!("notify-running-again-summary"),
+                                &tr!("notify-running-again-body"),
+                            );
+                        }
+                        Err(e) => {
+                            eprintln!("hushmic: restart failed: {e}");
+                            say(&cfg, &tr!("notify-chain-failed-summary"), &e);
+                        }
+                    }
+                }
+                last_face = None;
+            }
+            WinEvent::Show => {
+                // The A/B window is a follow-up: there is nothing to raise
+                // yet, but the wiring is the Linux one.
+                eprintln!("[hushmic] show request received (no window in this build)");
+                last_face = None;
+            }
+            WinEvent::Shutdown => break,
+        }
+        push_face(&shell, &mut last_face, &cfg, chain.as_ref(), mode);
+    }
+
+    if let Some(mut c) = chain.take() {
+        c.stop();
+    }
+    0
+}
+
+/// Is `mic` a live capture endpoint? `None` = the probe failed.
+#[cfg(windows)]
+fn mic_live(mic: &str) -> Option<bool> {
+    let (captures, _) = hushmic::win::audio::list_devices().ok()?;
+    Some(
+        captures
+            .iter()
+            .any(|d| d.to_lowercase().contains(&mic.to_lowercase())),
+    )
 }

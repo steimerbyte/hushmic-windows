@@ -1,3 +1,5 @@
+#![cfg(unix)] // pw-dump parsing: a Linux host's output
+
 use hushmic::pipewire::{
     chain_pins_quantum, parse_core_version, parse_metadata_number, parse_metadata_value,
     parse_node_id, parse_pwdump_nodes, pw_version_at_least, resolve_effective_mic,

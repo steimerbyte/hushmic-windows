@@ -6,6 +6,9 @@
 /assets/models/*.onnx
 /assets/models/*.weights.f32
 /assets/lib/*.so*
+/assets/win/*.dll
+# the unpacked onnxruntime-win-x64-<ver> release archive scripts/build-windows.sh accepts
+/assets/win/onnxruntime-*/
 /tests/fixtures/*.wav
 
 # Release build outputs + provisioning scratch

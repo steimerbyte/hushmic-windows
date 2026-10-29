@@ -1,3 +1,5 @@
+#![cfg(unix)] // the LADSPA descriptor exists only in the Unix plugin
+
 use dpdfnet_ladspa::get_ladspa_descriptor;
 
 #[test]

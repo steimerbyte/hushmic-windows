@@ -1,6 +1,6 @@
 # Installation notes
 
-The [README](../README.md#install) has the install commands. This page covers the exceptions.
+The [README](../README.md#install) has the install commands. This page covers the exceptions, all of them Linux: there is no installer on Windows, where `scripts/build-windows.sh` stages `dist/hushmic-windows-x86_64/` to unpack anywhere (see [README › Windows](../README.md#windows)).
 
 ## Ubuntu 22.04
 

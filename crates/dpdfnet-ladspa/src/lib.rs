@@ -1,13 +1,19 @@
-//! hushmic DPDFNet LADSPA plugin: a thin PipeWire-facing wrapper around the
-//! `hushmic-denoiser` engine crate. Everything here is host plumbing —
-//! control-port mapping, the inference worker + alignment ledger that
-//! decouple the DSP from the host's cycle (issue #10), the inference
-//! engine choice (issue #18), and the bundled ONNX Runtime's baked default
-//! paths.
+//! hushmic DPDFNet denoiser: the `hushmic-denoiser` engine crate behind one
+//! portable hop core. Everything here is host plumbing — control-port
+//! mapping, the inference worker + alignment ledger that decouple the DSP
+//! from the host's cycle (issue #10), the inference engine choice
+//! (issue #18), and the bundled ONNX Runtime's baked default paths.
+//!
+//! The per-hop algorithm itself lives in [`processor`], which compiles
+//! everywhere so the Windows audio host drives the same code. The LADSPA
+//! ABI, the realtime scheduling and the `rlimit` accounting are Linux/Unix
+//! only: the `ladspa` and `libc` dependencies are target-gated to `unix`.
 pub mod adaptive;
 pub mod align;
 pub mod ladder;
 pub mod log;
+pub mod processor;
+#[cfg(unix)]
 pub mod rt;
 pub mod worker;
 
@@ -17,15 +23,75 @@ pub use align::{
     STALL_HEADROOM,
 };
 pub use ladder::{Event, Ladder, Pinned, Policy, ShadowKind, Step, Tier};
+pub use processor::Processor;
 pub use rt::{RtOutcome, RT_PRIORITY};
 pub use worker::{HopEngine, WorkerHandle, RING_CAPACITY, RUN_GUARD_AFTER, RUN_GUARD_MIN_PARK};
 
+/// Off unix there is no scheduler to ask, no rtkit, no libdbus and no
+/// PipeWire data loop to mirror: the realtime request is the documented
+/// no-op and says so in the same contract line. `rt.rs` holds the Linux
+/// routes (direct `sched_setscheduler`, rtkit, the Realtime portal).
+#[cfg(not(unix))]
+pub mod rt {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    /// Nothing is requested, so nothing is waited for.
+    pub(crate) const REQUEST_TIMEOUT: Duration = Duration::from_secs(5);
+
+    /// The most any route may grant; kept so the contract line and the
+    /// doctor read the same on every platform.
+    pub const RT_PRIORITY: i32 = 10;
+
+    /// An EXE's code lives exactly as long as its process, so a thread may
+    /// always be detached here.
+    pub(crate) fn keep_plugin_loaded() -> bool {
+        true
+    }
+
+    /// No route raises a thread's policy on this platform.
+    pub(crate) fn current_thread_is_realtime() -> bool {
+        false
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub enum RtOutcome {
+        Granted(i32, String),
+        Unavailable(String),
+    }
+
+    /// The log contract line for an outcome (same shape as the Linux one).
+    pub fn contract(o: &RtOutcome) -> String {
+        match o {
+            RtOutcome::Granted(p, detail) => format!("worker: realtime priority {p} ({detail})"),
+            RtOutcome::Unavailable(why) => {
+                format!("worker: realtime priority not available ({why})")
+            }
+        }
+    }
+
+    /// The no-op: release the worker's reset lease straight away and report
+    /// that no grant was attempted here.
+    pub(crate) fn request_realtime_bounded(
+        _tid: u32,
+        _cancelled: Arc<AtomicBool>,
+        pending: Arc<AtomicBool>,
+        _timeout: Duration,
+    ) -> RtOutcome {
+        pending.store(false, Ordering::Release);
+        RtOutcome::Unavailable("not attempted on this platform".into())
+    }
+}
+
 use hushmic_denoiser::{Denoiser, Mode, RuntimeInit};
+#[cfg(unix)]
 use ladspa::{DefaultValue, Plugin, PluginDescriptor, Port, PortConnection, PortDescriptor};
 use std::path::PathBuf;
-use std::time::Duration;
 
+#[cfg(unix)]
 const LABEL: &str = "dpdfnet_mono";
+#[cfg(unix)]
 const UNIQUE_ID: u64 = 0x68736D31; // "hsm1"
 const DEFAULT_MODEL: &str = env!("HUSHMIC_DEFAULT_MODEL");
 const DEFAULT_DYLIB: &str = env!("HUSHMIC_DEFAULT_DYLIB");
@@ -154,6 +220,20 @@ pub fn engine_label(d: &Denoiser) -> String {
     }
 }
 
+/// The contract word [`Processor::engine_label`] reports, captured at
+/// instantiate time while the engine is still on this thread: the engine
+/// itself moves into the worker. Without the native feature ONNX is the
+/// only engine there is.
+#[cfg(feature = "native")]
+fn label_of(d: &Denoiser) -> String {
+    engine_label(d)
+}
+
+#[cfg(not(feature = "native"))]
+fn label_of(_d: &Denoiser) -> String {
+    "onnx".to_string()
+}
+
 /// The inference contract line for one model: `inference: native w7a8 avx2
 /// for <model>` or `inference: onnx (<reason>) for <model>`. The app parses it
 /// for `status` and `--doctor`; it must never start with `engine: `, which
@@ -247,6 +327,10 @@ fn runtime_note(ours: Option<&str>, requested: &str) -> Option<String> {
     }
 }
 
+/// The main engine plus the [`label_of`] label read before the engine moves
+/// into the worker: the one pair [`Processor::new`] takes from here.
+type EngineInit = (AdaptiveEngine<Denoiser, Box<dyn Policy>>, String);
+
 /// Bring up the pinned bundled runtime and load the model(s). On any failure
 /// of the main model the plugin runs engine-less (working-but-silent node).
 /// The runtime commit is gated on OUR resolved path — a failed init must
@@ -262,7 +346,10 @@ fn runtime_note(ours: Option<&str>, requested: &str) -> Option<String> {
 /// and both go through `load_denoiser`, so both tiers run on the selected
 /// engine. The runtime is committed even when both models end up native:
 /// any fallback to ONNX needs it.
-fn init_engine() -> Option<AdaptiveEngine<Denoiser, Box<dyn Policy>>> {
+///
+/// The second value is the main model's [`label_of`]: the engine moves into
+/// the worker thread, so what it runs on is only readable right here.
+fn init_engine() -> Option<EngineInit> {
     let dylib = std::env::var("ORT_DYLIB_PATH")
         .ok()
         .filter(|s| !s.is_empty()) // empty counts as unset, as in ort itself
@@ -292,6 +379,7 @@ fn init_engine() -> Option<AdaptiveEngine<Denoiser, Box<dyn Policy>>> {
             return None;
         }
     };
+    let label = label_of(&main);
     // The comparison is by canonical path so a symlinked or differently
     // spelled duplicate of the main model is not loaded twice as the
     // "light" tier.
@@ -344,165 +432,45 @@ fn init_engine() -> Option<AdaptiveEngine<Denoiser, Box<dyn Policy>>> {
         _ => (Some(main), light),
     };
     let policy = build_policy(&tiers);
-    Some(AdaptiveEngine::new(quality, light, policy))
+    Some((AdaptiveEngine::new(quality, light, policy), label))
 }
 
+/// The LADSPA wrapper: the portable hop core behind the plugin's ports.
+#[cfg(unix)]
 struct DpdfnetPlugin {
-    /// The RT-side handle to the inference worker that owns the engine
-    /// (issue #10: inference must never run on the PipeWire data thread).
-    /// `None` = failed init / wrong rate / unspawnable thread: the
-    /// established working-but-silent degradation.
-    worker: Option<WorkerHandle>,
-    aligner: Aligner,
-    /// The activation handshake succeeded; false degrades to silence.
-    active: bool,
-    /// Mid-stream recovery after an input-ring overflow: silence until
-    /// the worker acks the reset, then resume fresh (see worker.rs).
-    restarting: bool,
-    // Control-port caches as bit patterns (NaN-proof compares).
-    last_db_bits: u32,
-    last_mode_bits: u32,
+    core: Processor,
 }
 
+#[cfg(unix)]
 impl DpdfnetPlugin {
     fn new(sample_rate: u64) -> Self {
-        // The DSP constants (N_FFT/HOP) and the DPDFNet models are 48 kHz-only.
-        // LADSPA instantiate cannot cleanly reject, so a mismatched host gets the
-        // same degradation as a failed engine init: a working-but-silent node
-        // (audibly wrong beats subtly wrong enhancement).
-        let engine = if sample_rate != 48_000 {
-            eprintln!(
-                "[dpdfnet-ladspa] unsupported sample rate {sample_rate} (need 48000); \
-                 emitting silence"
-            );
-            None
-        } else {
-            init_engine()
-        };
+        // LADSPA instantiate cannot cleanly reject a sample rate, so the
+        // core's working-but-silent degradation is the whole rejection
+        // story here (see `Processor::new`).
         DpdfnetPlugin {
-            worker: engine.and_then(WorkerHandle::spawn),
-            aligner: Aligner::new(),
-            active: false,
-            restarting: false,
-            last_db_bits: f32::NAN.to_bits(),
-            last_mode_bits: f32::NAN.to_bits(),
+            core: Processor::new(sample_rate),
         }
     }
 }
 
-/// Zero the whole output range (the silent-node degradation).
-fn emit_silence(output: &mut [f32], sample_count: usize) {
-    for o in output[..sample_count].iter_mut() {
-        *o = 0.0;
-    }
-}
-
+#[cfg(unix)]
 impl Plugin for DpdfnetPlugin {
     fn activate(&mut self) {
-        // Fresh session: reset the engine (via the worker handshake — the
-        // host calls activate before streaming, so a bounded wait is fine
-        // here; a stuck worker degrades to silence and the next activate
-        // retries), drop stale audio, restart the alignment ledger.
-        self.aligner.reset();
-        self.restarting = false;
-        self.last_db_bits = f32::NAN.to_bits();
-        self.last_mode_bits = f32::NAN.to_bits(); // force a set on first run()
-        self.active = match self.worker.as_mut() {
-            Some(w) => {
-                let ok = w.request_reset_and_wait(Duration::from_secs(2));
-                if ok {
-                    w.drain_output();
-                } else if !w.engine_dead() {
-                    eprintln!("[dpdfnet-ladspa] worker did not ack activation; emitting silence");
-                }
-                ok
-            }
-            None => false,
-        };
+        self.core.activate();
     }
 
     fn run<'a>(&mut self, sample_count: usize, ports: &[&'a PortConnection<'a>]) {
-        let input = ports[0].unwrap_audio();
         let mut output = ports[1].unwrap_audio_mut();
-        let db = *ports[2].unwrap_control();
-        let mode_ctl = *ports[3].unwrap_control();
-
-        // RT contract: nothing below allocates, locks, logs or panics:
-        // ring pushes/pops, atomics, and one futex wake at most. The
-        // degradation paths (engine death, input overflow) are reported
-        // by the worker thread from flags set here.
-        let w = match self.worker.as_mut() {
-            Some(w) if self.active => w,
-            _ => {
-                emit_silence(&mut output, sample_count);
-                return;
-            } // silent node: failed init, wrong rate, or failed activation
-        };
-        if w.engine_dead() {
-            emit_silence(&mut output, sample_count);
-            return;
-        }
-        if db.to_bits() != self.last_db_bits {
-            w.set_attn_db(db);
-            self.last_db_bits = db.to_bits();
-        }
-        if mode_ctl.to_bits() != self.last_mode_bits {
-            w.set_mode_control(mode_ctl);
-            self.last_mode_bits = mode_ctl.to_bits();
-        }
-        if self.restarting {
-            // Overflow recovery: silence until the worker acks the reset.
-            // ORDER MATTERS: observe the ack BEFORE the final drain —
-            // every worker push happens-before the ack store, so a drain
-            // after an observed ack removes any stale partial hop, and
-            // the worker stays parked (empty input ring) until fresh
-            // input is pushed below. Draining first would let a push
-            // landing in the drain->ack window survive into the fresh
-            // stream: a stale blip plus permanent latency drift.
-            // activate() follows the same ack-then-drain discipline.
-            if w.reset_acked() {
-                w.drain_output();
-                self.restarting = false; // fall through: stream fresh audio
-            } else {
-                w.drain_output(); // housekeeping: bound ring occupancy meanwhile
-                emit_silence(&mut output, sample_count);
-                return;
-            }
-        }
-        let accepted = w.push_input(&input[..sample_count]);
-        if accepted < sample_count {
-            // Input ring full: the worker is >680 ms behind. Restart the
-            // stream — resync the mic to now instead of replaying stale
-            // audio into a live call (see worker.rs / the design doc).
-            w.request_reset();
-            self.restarting = true;
-            self.aligner.reset();
-            w.drain_output();
-            emit_silence(&mut output, sample_count);
-            return;
-        }
-        w.note_quantum(sample_count);
-        w.wake();
-        let plan = self.aligner.plan(sample_count, w.output_available());
-        for _ in 0..plan.discard {
-            let _ = w.pop_output();
-        }
-        let mut i = 0;
-        for _ in 0..plan.lead_zeros {
-            output[i] = 0.0;
-            i += 1;
-        }
-        for _ in 0..plan.real {
-            output[i] = w.pop_output().unwrap_or(0.0);
-            i += 1;
-        }
-        for _ in 0..plan.tail_zeros {
-            output[i] = 0.0;
-            i += 1;
-        }
+        self.core.process_hop(
+            &ports[0].unwrap_audio()[..sample_count],
+            &mut output,
+            *ports[2].unwrap_control(),
+            *ports[3].unwrap_control(),
+        );
     }
 }
 
+#[cfg(unix)]
 fn new_instance(_d: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Send> {
     Box::new(DpdfnetPlugin::new(sample_rate))
 }
@@ -512,6 +480,8 @@ fn new_instance(_d: &PluginDescriptor, sample_rate: u64) -> Box<dyn Plugin + Sen
 // use the C ABI to match (a plain Rust-ABI fn is formally UB at that call).
 // The Option<PluginDescriptor> signature is the ladspa crate's own contract —
 // both sides are this exact Rust type, so the improper_ctypes lint is moot.
+// Unix only: Windows has no LADSPA host, only the rlib's `Processor`.
+#[cfg(unix)]
 #[allow(improper_ctypes_definitions)]
 #[no_mangle]
 pub extern "C" fn get_ladspa_descriptor(index: u64) -> Option<PluginDescriptor> {
@@ -710,6 +680,7 @@ mod tests {
         assert!(e.contains("HUSHMIC_INFERENCE=tensorrt"), "{e}");
     }
 
+    #[cfg(unix)]
     #[test]
     fn mode_port_is_declared_fourth() {
         // Appended after the attn port so existing confs stay valid
@@ -742,7 +713,7 @@ mod tests {
     fn mismatched_sample_rate_disables_engine() {
         // 44.1 kHz hosts must get the silent-node degradation, never the 48 kHz
         // model running on wrongly-spaced spectra.
-        let p = DpdfnetPlugin::new(44_100);
-        assert!(p.worker.is_none());
+        let p = Processor::new(44_100);
+        assert_eq!(p.engine_label(), "silent");
     }
 }

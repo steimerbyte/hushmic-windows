@@ -1,3 +1,5 @@
+#![cfg(unix)] // runs the LADSPA plugin through its Unix host ABI
+
 //! Asset-gated end-to-end pin (issue #10): the whole plugin — real model,
 //! real worker thread, real rings — delays audio by EXACTLY the declared
 //! latency at the design quantum. Bypass mode is the measurement path

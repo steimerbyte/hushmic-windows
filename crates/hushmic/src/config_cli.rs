@@ -363,9 +363,27 @@ pub fn offline_get(
 /// `set` refer to without a daemon (see
 /// [`crate::pipewire::resolve_chain_target`]). A crashed run's takeover
 /// breadcrumb counts, as in `--doctor`.
+#[cfg(unix)]
 pub fn offline_device(cfg: &Config) -> Option<String> {
     let prior = crate::controller::persisted_prior_default();
     crate::pipewire::resolve_chain_target(cfg.mic.as_deref(), prior.as_deref()).profile_device
+}
+
+/// Windows: the configured mic while it is still a live capture device.
+/// A mic that is gone drops back to the system default, as on Linux — the
+/// device whose settings apply is then nobody's, and the defaults run.
+///
+/// The match is the chain's own rule (case-insensitive substring of the
+/// friendly endpoint name), so the settings this names are the ones the
+/// running chain uses.
+#[cfg(windows)]
+pub fn offline_device(cfg: &Config) -> Option<String> {
+    let mic = cfg.mic.as_deref().filter(|m| !m.trim().is_empty())?;
+    let (capture, _) = crate::win::audio::list_devices().ok()?;
+    capture
+        .iter()
+        .find(|d| d.to_lowercase().contains(&mic.to_lowercase()))
+        .cloned()
 }
 
 /// The no-daemon path: validate exactly like the daemon, write the file,
@@ -378,26 +396,11 @@ pub fn offline_set(key: &str, raw: &str, model_dir: &Path) -> Result<String, Str
     apply(&mut cfg, k, v, device.as_deref());
     cfg.save()
         .map_err(|e| format!("could not write {}: {e}", Config::path().display()))?;
-    let mut note = String::new();
-    if k == Key::Autostart {
-        if crate::sandbox::is_flatpak() {
-            match crate::portal::request_background_blocking(cfg.autostart) {
-                Ok(granted) if cfg.autostart && !granted => {
-                    note.push_str(" (the desktop denied the autostart request)")
-                }
-                Ok(_) => {}
-                Err(e) => note.push_str(&format!(" (autostart request failed: {e})")),
-            }
-        } else {
-            crate::autostart::set_autostart(cfg.autostart)
-                .map_err(|e| format!("saved, but the autostart entry could not be written: {e}"))?;
-            if cfg.autostart && crate::service::unit_enabled() {
-                note.push_str(
-                    " (note: the systemd unit hushmic.service is enabled too; use one or the other)",
-                );
-            }
-        }
-    }
+    let note = if k == Key::Autostart {
+        autostart_side_effect(&cfg)?
+    } else {
+        String::new()
+    };
     Ok(format!(
         "{} = {}{}{}\n",
         k.name(),
@@ -407,38 +410,88 @@ pub fn offline_set(key: &str, raw: &str, model_dir: &Path) -> Result<String, Str
     ))
 }
 
+/// The `autostart` side effect: the login entry IS what "autostart" means,
+/// so writing the setting must write the entry. Returns a note for the
+/// user (empty when there is nothing to say).
+#[cfg(unix)]
+fn autostart_side_effect(cfg: &Config) -> Result<String, String> {
+    let mut note = String::new();
+    if crate::sandbox::is_flatpak() {
+        match crate::portal::request_background_blocking(cfg.autostart) {
+            Ok(granted) if cfg.autostart && !granted => {
+                note.push_str(" (the desktop denied the autostart request)")
+            }
+            Ok(_) => {}
+            Err(e) => note.push_str(&format!(" (autostart request failed: {e})")),
+        }
+    } else {
+        crate::autostart::set_autostart(cfg.autostart)
+            .map_err(|e| format!("saved, but the autostart entry could not be written: {e}"))?;
+        if cfg.autostart && crate::service::unit_enabled() {
+            note.push_str(
+                " (note: the systemd unit hushmic.service is enabled too; use one or the other)",
+            );
+        }
+    }
+    Ok(note)
+}
+
+/// Windows: the HKCU Run entry is the autostart. There is no systemd unit
+/// and no desktop portal, so the note is always empty.
+#[cfg(windows)]
+fn autostart_side_effect(cfg: &Config) -> Result<String, String> {
+    crate::win::shell::set_autostart(cfg.autostart)
+        .map_err(|e| format!("saved, but the autostart entry could not be written: {e}"))?;
+    Ok(String::new())
+}
+
 /// `hushmic devices`: the real capture sources, the configured one marked.
+#[cfg(unix)]
 pub fn render_devices(
     sources: &[crate::pipewire::Source],
     configured: Option<&str>,
     json: bool,
 ) -> String {
+    let devices: Vec<(&str, Option<&str>)> = sources
+        .iter()
+        .map(|s| (s.name.as_str(), Some(s.description.as_str())))
+        .collect();
+    render_device_list(&devices, configured, json, "is PipeWire running?")
+}
+
+/// The `devices` renderer itself, over `(name, description)` pairs: WASAPI
+/// endpoints have no separate description, so they pass `None`.
+pub fn render_device_list(
+    devices: &[(&str, Option<&str>)],
+    configured: Option<&str>,
+    json: bool,
+    empty_hint: &str,
+) -> String {
     if json {
         return serde_json::Value::Array(
-            sources
+            devices
                 .iter()
-                .map(|s| {
+                .map(|(name, description)| {
                     serde_json::json!({
-                        "name": s.name,
-                        "description": s.description,
-                        "selected": configured == Some(s.name.as_str()),
+                        "name": name,
+                        "description": description,
+                        "selected": configured == Some(*name),
                     })
                 })
                 .collect(),
         )
         .to_string();
     }
-    if sources.is_empty() {
-        return "(no microphones found — is PipeWire running?)\n".to_string();
+    if devices.is_empty() {
+        return format!("(no microphones found — {empty_hint})\n");
     }
     let mut out = String::new();
-    for s in sources {
-        let mark = if configured == Some(s.name.as_str()) {
-            "*"
-        } else {
-            " "
-        };
-        out.push_str(&format!("{mark} {}\t{}\n", s.name, s.description));
+    for (name, description) in devices {
+        let mark = if configured == Some(*name) { "*" } else { " " };
+        match description {
+            Some(d) => out.push_str(&format!("{mark} {name}\t{d}\n")),
+            None => out.push_str(&format!("{mark} {name}\n")),
+        }
     }
     out
 }
@@ -757,6 +810,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(unix)]
     fn devices_marks_the_configured_mic() {
         use crate::pipewire::Source;
         let src = vec![
@@ -778,5 +832,22 @@ mod tests {
         assert_eq!(v[0]["selected"], false);
         assert!(render_devices(&[], None, false).contains("no microphones"));
         assert_eq!(render_devices(&[], None, true), "[]");
+    }
+
+    /// The renderer itself, over the `(name, description)` pairs both hosts
+    /// feed it: a Windows endpoint has no separate description.
+    #[test]
+    fn device_list_renders_names_and_marks_the_configured_one() {
+        let devices = [("alsa_input.a", Some("Webcam")), ("alsa_input.b", None)];
+        let plain = render_device_list(&devices, Some("alsa_input.b"), false, "no devices");
+        assert!(plain.contains("  alsa_input.a\tWebcam\n"), "{plain}");
+        assert!(plain.contains("* alsa_input.b\n"), "{plain}");
+        let v: serde_json::Value =
+            serde_json::from_str(&render_device_list(&devices, Some("alsa_input.b"), true, "x"))
+                .unwrap();
+        assert_eq!(v[1]["selected"], true);
+        assert_eq!(v[0]["selected"], false);
+        assert!(render_device_list(&[], None, false, "no devices").contains("no devices"));
+        assert_eq!(render_device_list(&[], None, true, "x"), "[]");
     }
 }

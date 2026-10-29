@@ -91,20 +91,18 @@ pub struct SuppressionSwitch {
 impl SuppressionSwitch {
     /// `hushmic mode suppress` / `hushmic mode` over the control socket.
     pub fn control_socket() -> Self {
-        let words = |w: &[&str]| w.iter().map(|s| s.to_string()).collect::<Vec<_>>();
         SuppressionSwitch {
-            turn_on: Arc::new(move || {
-                match crate::control::client_run(&words(&["mode", "suppress"])) {
-                    (0, _) => Ok(()),
-                    // 2 = nobody listening (no tray).
-                    (1, out) if out != crate::control::NO_REPLY => {
-                        Err(TurnOnError::Refused(out.trim().to_string()))
-                    }
-                    _ => Err(TurnOnError::NoReply),
+            turn_on: Arc::new(move || match client(&["mode", "suppress"]) {
+                (0, _) => Ok(()),
+                // 1 with a real reply = the daemon refused; no listener is
+                // 2 on both hosts (Linux socket, Windows pipe).
+                (1, out) if out != crate::control::NO_REPLY => {
+                    Err(TurnOnError::Refused(out.trim().to_string()))
                 }
+                _ => Err(TurnOnError::NoReply),
             }),
             is_on: Arc::new(
-                move || match crate::control::client_run(&words(&["mode"])) {
+                move || match client(&["mode"]) {
                     // Any chain-alive mode (bypass, mute) counts: only "off"
                     // leaves the window without a virtual mic.
                     (0, out) => Some(out.trim() != "off"),
@@ -113,6 +111,21 @@ impl SuppressionSwitch {
             ),
         }
     }
+}
+
+/// One CLI client round trip over the host's control channel: the Unix
+/// socket on Linux, the named pipe on Windows. Both answer the same words
+/// with the same exit codes, so the switch logic above is written once.
+#[cfg(unix)]
+fn client(words: &[&str]) -> (i32, String) {
+    let words: Vec<String> = words.iter().map(|s| s.to_string()).collect();
+    crate::control::client_run(&words)
+}
+
+#[cfg(windows)]
+fn client(words: &[&str]) -> (i32, String) {
+    let words: Vec<String> = words.iter().map(|s| s.to_string()).collect();
+    crate::win::control::client_run(&words)
 }
 
 /// Why a turn-on request did not go through.

@@ -144,7 +144,7 @@ ab-no-pipewire-body = HushMic needs a running PipeWire with its command line too
 
 about-window-title = About HushMic
 about-version = Version { $version }
-about-tagline = Real-time noise suppression for Linux
+about-tagline = Real-time noise suppression for your microphone
 about-model = Noise model: DPDFNet
 about-copy-diagnostics = Copy diagnostics
 about-collecting = Collecting…

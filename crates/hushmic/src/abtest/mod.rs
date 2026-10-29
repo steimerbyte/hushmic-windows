@@ -3,16 +3,26 @@
 //!
 //! Split: `types` is the backend↔UI contract, `state` the pure state
 //! machine, `dsp` the FFT/level analysis, `metrics` the sample evaluation,
-//! `audio` the PipeWire-facing backend thread, `ui` the egui layer. The UI
-//! owns no audio state; everything crosses the two channels.
+//! `sample`/`watch` the host-neutral take and capture guards, `audio` the
+//! device-facing backend thread, `ui` the egui layer. The UI owns no audio
+//! state; everything crosses the two channels. Only `audio` is per host:
+//! PipeWire capture children on Linux, in-process WASAPI on Windows
+//! (`win::abtest`, aliased in below so `ui`/`state` are written once).
 
+#[cfg(unix)]
 pub mod audio;
+/// The Windows backend: the same `audio::Backend` contract, WASAPI inside
+/// the process instead of `pw-record`/`pw-play` children.
+#[cfg(windows)]
+pub use crate::win::abtest as audio;
 pub mod dsp;
 pub mod metrics;
+pub mod sample;
 pub mod state;
 pub mod stream;
 pub mod types;
 pub mod ui;
+pub mod watch;
 
 /// How the window ended.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,6 +37,11 @@ pub enum WindowEnd {
 /// microphone feeding the chain (traced by the caller), `filtered_node` is
 /// normally `hushmic_source`. `gate` is what blocked the mic test when a
 /// plain launch opened the window anyway (open for a normal window).
+///
+/// On Windows `raw_node` is the configured microphone (a substring of the
+/// endpoint's friendly name, empty = the system default), `filtered_node` is
+/// empty because the suppressed leg is derived in-process, and the gate is
+/// always open: neither blocker (no chain, no PipeWire) can exist there.
 pub fn run_window(
     raw_node: String,
     filtered_node: String,
@@ -44,6 +59,7 @@ pub fn run_window(
 /// tray-requested window then falls back to the file-based recording test
 /// (pw-cat writes a real file fine on every version), reusing the same
 /// path as the no-GL fallback.
+#[cfg(unix)]
 pub fn exit_needs_newer_pipewire() -> ! {
     use crate::notify::{self, Slot};
     eprintln!("hushmic: The live A/B view needs a newer PipeWire on this system.");

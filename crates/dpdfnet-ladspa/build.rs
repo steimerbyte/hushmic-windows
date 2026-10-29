@@ -13,9 +13,17 @@ fn main() {
             .display()
             .to_string()
     });
+    // The bundled runtime's file name follows the build target, not the
+    // build host: a cross-compiled Windows build carries onnxruntime.dll.
+    let dylib_name = if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
+        "onnxruntime.dll"
+    } else {
+        "libonnxruntime.so"
+    };
     let dylib = std::env::var("HUSHMIC_BUILD_DYLIB").unwrap_or_else(|_| {
         repo_root
-            .join("assets/lib/libonnxruntime.so")
+            .join("assets/lib")
+            .join(dylib_name)
             .display()
             .to_string()
     });

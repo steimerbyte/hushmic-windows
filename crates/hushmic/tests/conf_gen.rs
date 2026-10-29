@@ -1,3 +1,5 @@
+#![cfg(unix)] // the filter-chain config the Linux host consumes
+
 use hushmic::config::Config;
 use hushmic::controller::{render_conf, Paths, RunMode, LATENCY_SAMPLES};
 use std::path::PathBuf;

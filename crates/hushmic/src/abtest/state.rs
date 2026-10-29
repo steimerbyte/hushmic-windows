@@ -980,7 +980,7 @@ mod tests {
         // Calibrated against the English catalog; a language whose longest
         // hint outgrows it materially would need TOAST_SECS revisited.
         crate::i18n::pin_english();
-        let longest = crate::abtest::audio::silent_mic_hint().len() as f32;
+        let longest = crate::abtest::watch::silent_mic_hint().len() as f32;
         assert!(
             TOAST_SECS >= longest / 15.0,
             "TOAST_SECS {TOAST_SECS} too short for a {longest}-char hint"

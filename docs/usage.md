@@ -11,6 +11,8 @@
 | `hushmic --doctor` | prints a diagnostics report and exits 1 when it finds problems |
 | `hushmic --version` | version and install paths |
 
+On Windows the same commands are `hushmic.exe`, and the virtual mic is the render into the cable (see [README › Windows](../README.md#windows)).
+
 Only one instance runs per session. Quitting removes the virtual mic and restores the previous default input if HushMic had changed it.
 
 ## Modes
@@ -40,7 +42,7 @@ The tray icon shows the state. On KDE and GNOME it is a monochrome icon in your 
 
 ## Microphone, model and strength
 
-**Microphone** lists the capture devices PipeWire sees. *System default* follows whatever the system default input is, including when you plug a headset in. If your chosen microphone disappears, HushMic falls back to the system default and switches back when it returns.
+**Microphone** lists the capture devices PipeWire sees (on Windows, the ones WASAPI sees). *System default* follows whatever the system default input is, including when you plug a headset in. If your chosen microphone disappears, HushMic falls back to the system default and switches back when it returns.
 
 **Model**: `dpdfnet8_48khz_hr` is the quality model, `dpdfnet2_48khz_hr` needs less CPU. Changing the model restarts the chain (a short gap on the virtual mic).
 
@@ -51,6 +53,8 @@ Model and strength are remembered per microphone. Pick a microphone under **Micr
 With **Set as default microphone** on, HushMic is the default input and uses the microphone that was the default before. If you switch the system default to another microphone yourself, that switch stays: HushMic follows the new microphone with its settings and does not take the default back until you turn it on again (mode, the checkbox, or the next start).
 
 ## Using the plugin in EasyEffects
+
+Linux only: Windows has no LADSPA host, and `hushmic.exe` runs the same engine in-process instead, so there is no plugin to load there.
 
 The noise suppression lives in a LADSPA plugin, `libdpdfnet_ladspa.so`, and EasyEffects can load it directly. In EasyEffects, add **Deep Noise Remover** to the input or output effects and set its **Model** to *DPDFNet*. On the output side it cleans up what you hear, for example background noise from other people in a call. This needs an EasyEffects version with the DPDFNet model, added in October 2026.
 
@@ -88,12 +92,12 @@ hushmic devices [--json]       microphones you can pass as `mic`
 hushmic service install|uninstall   see headless.md
 ```
 
-`status`, `mode`, `toggle` and `quit` talk to the running instance over a socket. Exit codes: 0 ok, 1 invalid usage or a failed command, 2 HushMic is not running. `toggle mute` twice returns you to the state you came from, so one key can serve as a mute button.
+`status`, `mode`, `toggle` and `quit` talk to the running instance over a socket (a named pipe on Windows). Exit codes: 0 ok, 1 invalid usage or a failed command, 2 HushMic is not running. `toggle mute` twice returns you to the state you came from, so one key can serve as a mute button.
 
 What `status` shows:
 
 - `engine:` is what the chain runs right now: `quality model`, `light model` or `passthrough`, followed by the inference engine, for example `quality model (native w7a8 avx2)`. Under CPU pressure HushMic falls back to the light model or to unfiltered audio and climbs back later, see [troubleshooting.md](troubleshooting.md#latency-and-cpu).
-- `chain:` reads `running, idle (not processing audio right now)` while PipeWire has paused the filter chain because nothing is reading from it.
+- `chain:` reads `running, idle (not processing audio right now)` while PipeWire has paused the filter chain because nothing is reading from it; on Windows it reads plain `running`, since nothing there pauses the in-process chain.
 - `model:` and `strength:` show the settings in effect and whose they are, for example `strength: 100 dB (RODE NT-USB profile)` or `(defaults)`.
 
 In `status --json`:
@@ -107,7 +111,7 @@ In `status --json`:
 
 ## Configuration
 
-The file is `~/.config/hushmic/config.toml` (`hushmic config path` prints the exact location). Set keys with `hushmic config set KEY VALUE`:
+The file is `~/.config/hushmic/config.toml` (`hushmic config path` prints the exact location; on Windows it is `%APPDATA%\hushmic\hushmic\config\config.toml`). Set keys with `hushmic config set KEY VALUE`:
 
 | key | values | default | applied |
 |-----|--------|---------|---------|
@@ -123,10 +127,10 @@ The file is `~/.config/hushmic/config.toml` (`hushmic config path` prints the ex
 
 Booleans also accept `on`/`off`, `yes`/`no` and `1`/`0`. `tray = false` hides the icon; a plain `hushmic` launch still opens the window, so use `--headless` when you want neither.
 
-`tray_icon = auto` picks the monochrome icons on KDE and GNOME, which recolor them to match the panel, and the colored ones everywhere else. `color` and `symbolic` pin the choice. `symbolic` on a desktop that does not recolor panel icons (LXQt, for example) can come out near-black on a dark panel. If the monochrome files are not installed (an older package, a plain `cargo build`), the desktop shows the colored icon.
+`tray_icon = auto` picks the monochrome icons on KDE and GNOME, which recolor them to match the panel, and the colored ones everywhere else. It has no effect on Windows, whose notification-area icon is always the colored one. `color` and `symbolic` pin the choice. `symbolic` on a desktop that does not recolor panel icons (LXQt, for example) can come out near-black on a dark panel. If the monochrome files are not installed (an older package, a plain `cargo build`), the desktop shows the colored icon.
 
-`inference = auto` runs the models on the native engine where the CPU supports it (x86-64 with AVX2 and FMA) and its weight files are installed, and on ONNX Runtime otherwise. `onnx` always uses ONNX Runtime. A change restarts the filter chain, which takes a moment. `hushmic status` shows the engine in use.
+`inference = auto` runs the models on the native engine where the CPU supports it (x86-64 with AVX2 and FMA) and its weight files are installed, and on ONNX Runtime otherwise. Windows always uses ONNX Runtime, which is the only engine that build links. `onnx` always uses ONNX Runtime. A change restarts the filter chain, which takes a moment. `hushmic status` shows the engine in use.
 
 The file also holds `enabled` (set with `hushmic mode`), `mic_prefs` (model and strength per microphone) and `shortcuts_setup`, all managed by the app. The top-level `model` and `attn_limit` are the defaults for microphones without an entry in `mic_prefs`. `tray` and `notifications` are only written when false, `tray_icon` and `inference` when they are not `auto`, `mic_prefs` when non-empty and `shortcuts_setup` when true, so a file from an older version stays unchanged.
 
-`SIGTERM`, `SIGINT` and `SIGHUP` all stop HushMic cleanly. There is no reload signal; use `hushmic config set`.
+`SIGTERM`, `SIGINT` and `SIGHUP` all stop HushMic cleanly on Linux; on Windows it is Ctrl-C, Ctrl-Break or closing the console. There is no reload signal; use `hushmic config set`.

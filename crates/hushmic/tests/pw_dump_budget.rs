@@ -1,3 +1,5 @@
+#![cfg(unix)] // stands in fake `pw-dump` scripts: a Linux host's tool
+
 //! `pipewire::pw_dump_within` against fake `pw-dump` scripts on PATH: the
 //! status path calls it on the main loop, so a wedged daemon must cost the
 //! budget and read as unknown, never hang.

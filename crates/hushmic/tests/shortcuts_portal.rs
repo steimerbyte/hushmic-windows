@@ -1,3 +1,5 @@
+#![cfg(unix)] // zbus (the global-shortcuts portal) is a Unix-only dependency
+
 //! Round-trip test for the global-shortcuts portal worker against a mock
 //! `org.freedesktop.portal.GlobalShortcuts` service on a PRIVATE session
 //! bus (the notify_dbus.rs pattern), so it runs headless and never touches

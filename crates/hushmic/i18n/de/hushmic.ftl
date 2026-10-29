@@ -101,7 +101,7 @@ ab-no-pipewire-body = HushMic benötigt ein laufendes PipeWire mit seinen Komman
 
 about-window-title = Über HushMic
 about-version = Version { $version }
-about-tagline = Rauschunterdrückung in Echtzeit für Linux
+about-tagline = Rauschunterdrückung in Echtzeit für Ihr Mikrofon
 about-model = Rauschmodell: DPDFNet
 about-copy-diagnostics = Diagnose kopieren
 about-collecting = Wird gesammelt…

@@ -1,6 +1,8 @@
 //! Real-socket round trips: listener thread on one end, the CLI client
 //! path on the other, a stub handler standing in for the main loop.
 
+#![cfg(unix)] // the control socket is a Unix socket; Windows uses a named pipe
+
 use hushmic::control::{self, ControlReq};
 use hushmic::lock;
 use std::sync::mpsc;

@@ -559,26 +559,13 @@ pub fn spawn_stderr_tee(
     tee_with_cap(reader, log, LOG_CAP_BYTES, generation)
 }
 
-/// The engine tier the running chain reports (issue #14). The plugin writes
-/// one contract line per transition to stderr (`[dpdfnet-ladspa] engine:
-/// <word> ...`); the tee below is the only reader, and this atomic is the
-/// only channel from a `module-filter-chain` plugin to the app.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum EngineTier {
-    Quality,
-    Light,
-    Passthrough,
-}
-
-impl EngineTier {
-    pub fn word(self) -> &'static str {
-        match self {
-            EngineTier::Quality => "quality",
-            EngineTier::Light => "light",
-            EngineTier::Passthrough => "passthrough",
-        }
-    }
-}
+/// The engine tier the running chain reports (issue #14): defined beside the
+/// `status` renderer that prints it (`control::EngineTier`), so the type does
+/// not depend on this PipeWire-facing module. The plugin writes one contract
+/// line per transition to stderr (`[dpdfnet-ladspa] engine: <word> ...`); the
+/// tee below is the only reader, and this atomic is the only channel from a
+/// `module-filter-chain` plugin to the app.
+pub use crate::control::EngineTier;
 
 /// The reported tier and the chain generation that reported it in one
 /// word: the low 8 bits hold the tier code (0 = nothing reported), the
@@ -674,23 +661,9 @@ pub fn parse_engine_line(line: &[u8]) -> Option<EngineTier> {
 /// What the plugin runs one model on (issue #18), from its contract line
 /// `[dpdfnet-ladspa] inference: <engine>[ (<reason>)] for <model>`, e.g.
 /// `native w7a8 avx2` or `onnx (native weights not installed (...))`.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Inference {
-    pub model: String,
-    pub engine: String,
-    /// Why ONNX runs; None for a native engine.
-    pub reason: Option<String>,
-}
-
-impl std::fmt::Display for Inference {
-    /// The plugin's own wording, without the head.
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match &self.reason {
-            Some(r) => write!(f, "{} ({r}) for {}", self.engine, self.model),
-            None => write!(f, "{} for {}", self.engine, self.model),
-        }
-    }
-}
+/// Defined in `control` (it is part of the `status` payload), re-exported
+/// here for the parser below and the tee.
+pub use crate::control::Inference;
 
 /// Parse an inference contract line. Like the tier line, the head is found
 /// anywhere in the line (a torn line can start with someone else's

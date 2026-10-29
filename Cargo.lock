@@ -1468,6 +1468,7 @@ name = "hushmic"
 version = "0.11.0"
 dependencies = [
  "directories",
+ "dpdfnet-ladspa",
  "eframe",
  "egui_kittest",
  "fluent-syntax",
@@ -1484,6 +1485,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "toml 1.1.2+spec-1.1.0",
+ "windows",
  "winit",
  "zbus",
 ]

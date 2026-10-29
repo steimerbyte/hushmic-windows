@@ -33,8 +33,9 @@ fn border(alpha: f32) -> Color32 {
     with_alpha(Color32::from_rgb(126, 166, 214), alpha)
 }
 
-/// "Copy diagnostics" lifecycle: collect off-thread (the probes shell out
-/// to pw-dump — never block a frame), copy on arrival, confirm briefly.
+/// "Copy diagnostics" lifecycle: collect off-thread (the probes talk to
+/// the audio server — never block a frame), copy on arrival, confirm
+/// briefly.
 enum CopyState {
     Idle,
     Collecting(std::sync::mpsc::Receiver<String>),
@@ -60,8 +61,17 @@ struct AboutApp {
     copy_state: CopyState,
 }
 
+/// The diagnostics report the button copies. Each host has its own
+/// report — the Linux PipeWire one and the Windows device/asset one — and
+/// both render the same plain-text document.
+#[cfg(unix)]
 fn collect_report_text() -> String {
     crate::diagnostics::render(&crate::diagnostics::collect()).0
+}
+
+#[cfg(windows)]
+fn collect_report_text() -> String {
+    crate::win::doctor::report().0
 }
 
 impl AboutApp {
@@ -353,7 +363,7 @@ mod tests {
         let mut harness = harness(vec2(WINDOW_SIZE[0], WINDOW_SIZE[1]));
         harness.run_steps(2);
         harness.get_by_label(&format!("Version {}", env!("CARGO_PKG_VERSION")));
-        harness.get_by_label("Real-time noise suppression for Linux");
+        harness.get_by_label(&tr!("about-tagline"));
         harness.get_by_label("MIT OR Apache-2.0");
     }
 

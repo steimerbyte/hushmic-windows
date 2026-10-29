@@ -1,3 +1,5 @@
+#![cfg(unix)] // the native engine and its setrlimit/affinity checks are Unix-only
+
 //! Native engine (feature `native`): parity against ONNX through the full
 //! Denoiser (STFT -> model -> iSTFT), engine selection, fallbacks, reset
 //! determinism, and the vendored sources against their recorded checksums.

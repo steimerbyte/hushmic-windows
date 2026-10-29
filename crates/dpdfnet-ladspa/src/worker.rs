@@ -71,6 +71,38 @@ impl RunGuard {
     }
 }
 
+/// The thread id a realtime helper would act on. Only the Unix routes use
+/// it (rt.rs); off unix the request is a documented no-op, so nothing is
+/// addressed and `0` stands in for a tid that is never consumed.
+#[cfg(unix)]
+type Tid = libc::pid_t;
+#[cfg(not(unix))]
+type Tid = u32;
+
+/// The kernel tid the realtime helper addresses. Off unix no route
+/// consumes one (the request is the documented no-op), so `0` is never
+/// read.
+#[cfg(unix)]
+fn current_tid() -> Tid {
+    // SAFETY: gettid has no preconditions.
+    (unsafe { libc::syscall(libc::SYS_gettid) }) as Tid
+}
+
+#[cfg(not(unix))]
+fn current_tid() -> Tid {
+    0
+}
+
+/// No `RLIMIT_RTTIME` to honour off unix: the guard keeps its fixed
+/// fallback budget, exactly as on a Linux process without the limit.
+#[cfg(not(unix))]
+fn rttime_limit() -> Option<Duration> {
+    None
+}
+
+/// The kernel's RTIME limit: the guard must sleep before the kernel kills
+/// the thread, so a finite limit shortens the fallback budget.
+#[cfg(unix)]
 fn rttime_limit() -> Option<Duration> {
     let mut limit = libc::rlimit {
         rlim_cur: 0,
@@ -86,6 +118,16 @@ fn rttime_limit() -> Option<Duration> {
     }
 }
 
+/// No `getrusage` off unix, so a park cannot be confirmed as a block: the
+/// guard then never resets its run time, the conservative reading.
+#[cfg(not(unix))]
+fn voluntary_switches() -> Option<i64> {
+    None
+}
+
+/// Voluntary context switches so far, the proof that a park really blocked
+/// instead of the thread being preempted.
+#[cfg(unix)]
 fn voluntary_switches() -> Option<libc::c_long> {
     // SAFETY: rusage is a plain output structure.
     let mut usage: libc::rusage = unsafe { std::mem::zeroed() };
@@ -247,7 +289,7 @@ impl WorkerHandle {
         // The worker reports its kernel tid so a helper can ask for
         // realtime scheduling on its behalf (rt.rs) without the worker ever
         // blocking on D-Bus.
-        let (tid_tx, tid_rx) = std::sync::mpsc::channel::<libc::pid_t>();
+        let (tid_tx, tid_rx) = std::sync::mpsc::channel::<Tid>();
         let thread = thread::Builder::new()
             .name("hushmic-dsp".into())
             // The native runtime keeps kernel scratch on the stack and asks
@@ -255,9 +297,7 @@ impl WorkerHandle {
             // RUST_MIN_STACK in the host's environment cannot shrink it.
             .stack_size(2 << 20)
             .spawn(move || {
-                // SAFETY: gettid has no preconditions.
-                let tid = unsafe { libc::syscall(libc::SYS_gettid) } as libc::pid_t;
-                let _ = tid_tx.send(tid);
+                let _ = tid_tx.send(current_tid());
                 // Panics from process_hop are handled (and contained)
                 // inside the loop; this outer guard covers the rest of
                 // the HopEngine surface (reset/controls), so ANY escape
@@ -422,7 +462,7 @@ impl WorkerHandle {
 /// Wait for the worker's tid, request realtime for it, log the one
 /// contract line. Never blocks the worker or the host.
 fn spawn_rt_helper(
-    tid_rx: std::sync::mpsc::Receiver<libc::pid_t>,
+    tid_rx: std::sync::mpsc::Receiver<Tid>,
     shared: Arc<Shared>,
     can_detach: bool,
 ) -> Option<JoinHandle<()>> {
