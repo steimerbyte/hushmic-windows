@@ -272,20 +272,14 @@ pub fn live_model(
 ) -> Option<String> {
     match tier {
         Some(EngineTier::Passthrough) => None,
-        Some(EngineTier::Light) if !configured_light => {
-            Some(LIGHT_MODEL.to_string())
-        }
+        Some(EngineTier::Light) if !configured_light => Some(LIGHT_MODEL.to_string()),
         _ => Some(chain_model.to_string()),
     }
 }
 
 /// The human wording of the engine line, e.g. `quality model (native
 /// w7a8)` or `light model (fallback, onnx)`.
-fn engine_words(
-    tier: EngineTier,
-    configured_light: bool,
-    inference: Option<&Inference>,
-) -> String {
+fn engine_words(tier: EngineTier, configured_light: bool, inference: Option<&Inference>) -> String {
     let (base, note) = match tier {
         EngineTier::Quality => ("quality model", None),
         EngineTier::Light if configured_light => ("light model", None),

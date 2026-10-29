@@ -842,9 +842,13 @@ mod tests {
         let plain = render_device_list(&devices, Some("alsa_input.b"), false, "no devices");
         assert!(plain.contains("  alsa_input.a\tWebcam\n"), "{plain}");
         assert!(plain.contains("* alsa_input.b\n"), "{plain}");
-        let v: serde_json::Value =
-            serde_json::from_str(&render_device_list(&devices, Some("alsa_input.b"), true, "x"))
-                .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&render_device_list(
+            &devices,
+            Some("alsa_input.b"),
+            true,
+            "x",
+        ))
+        .unwrap();
         assert_eq!(v[1]["selected"], true);
         assert_eq!(v[0]["selected"], false);
         assert!(render_device_list(&[], None, false, "no devices").contains("no devices"));

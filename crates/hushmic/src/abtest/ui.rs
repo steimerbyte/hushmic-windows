@@ -101,14 +101,12 @@ impl SuppressionSwitch {
                 }
                 _ => Err(TurnOnError::NoReply),
             }),
-            is_on: Arc::new(
-                move || match client(&["mode"]) {
-                    // Any chain-alive mode (bypass, mute) counts: only "off"
-                    // leaves the window without a virtual mic.
-                    (0, out) => Some(out.trim() != "off"),
-                    _ => None,
-                },
-            ),
+            is_on: Arc::new(move || match client(&["mode"]) {
+                // Any chain-alive mode (bypass, mute) counts: only "off"
+                // leaves the window without a virtual mic.
+                (0, out) => Some(out.trim() != "off"),
+                _ => None,
+            }),
         }
     }
 }

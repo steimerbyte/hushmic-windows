@@ -83,8 +83,8 @@ pub fn run(capture: &str, say: &dyn Fn(&str, &str)) -> Result<String, String> {
     let dir = work_dir().map_err(|e| format!("no private directory for the recording: {e}"))?;
     let raw_wav = dir.join(RAW_NAME);
     let clean_wav = dir.join(CLEAN_NAME);
-    let stored = write_wav(&raw_wav, raw_aligned)
-        .and_then(|()| write_wav(&clean_wav, processed_aligned));
+    let stored =
+        write_wav(&raw_wav, raw_aligned).and_then(|()| write_wav(&clean_wav, processed_aligned));
     if let Err(e) = stored {
         remove(&raw_wav);
         remove(&clean_wav);

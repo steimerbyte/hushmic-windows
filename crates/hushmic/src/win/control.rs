@@ -146,7 +146,10 @@ pub fn client_run(words: &[String]) -> (i32, String) {
     let Ok(mut pipe) = connect(&pipe_name()) else {
         return not_running();
     };
-    if pipe.write_all(format!("{}\n", refs.join(" ")).as_bytes()).is_err() {
+    if pipe
+        .write_all(format!("{}\n", refs.join(" ")).as_bytes())
+        .is_err()
+    {
         return not_running();
     }
     let mut raw = Vec::new();
@@ -275,9 +278,7 @@ fn handle(f: &File) -> HANDLE {
 fn wait_readable(f: &File, until: Instant) -> bool {
     loop {
         let mut avail = 0u32;
-        let peek = unsafe {
-            PeekNamedPipe(handle(f), None, 0, None, Some(&mut avail), None)
-        };
+        let peek = unsafe { PeekNamedPipe(handle(f), None, 0, None, Some(&mut avail), None) };
         if peek.is_err() || avail > 0 {
             return true;
         }

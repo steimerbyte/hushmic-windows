@@ -221,18 +221,49 @@ fn portal_worker_round_trip_on_a_private_bus() {
         eprintln!("SKIP portal_worker_round_trip_on_a_private_bus: dbus-daemon not available");
         return;
     }
+    // A config of our own rather than `--session`: session.conf carries
+    // <standard_session_servicedirs/>, so the bus would auto-activate the
+    // HOST's real portal on demand and phase 0 would see a live portal
+    // instead of an empty bus — the test then fails on any machine that has
+    // one installed. Without servicedirs the bus starts only what this test
+    // connects to it. Same policy as the distro's session.conf.
+    let conf = std::env::temp_dir().join(format!(
+        "hushmic-portal-bus-{}-{:?}.conf",
+        std::process::id(),
+        std::thread::current().id()
+    ));
+    std::fs::write(
+        &conf,
+        r#"<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
+<busconfig>
+  <type>session</type>
+  <listen>unix:tmpdir=/tmp</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow send_destination="*" eavesdrop="true"/>
+    <allow eavesdrop="true"/>
+    <allow own="*"/>
+  </policy>
+</busconfig>
+"#,
+    )
+    .expect("write private bus config");
     let mut daemon = Command::new("dbus-daemon")
-        .args(["--session", "--nofork", "--print-address=1"])
+        .arg(format!("--config-file={}", conf.display()))
+        .args(["--nofork", "--print-address=1"])
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
         .expect("spawn dbus-daemon");
+    // Parsed only at startup: drop the file once the address has been read.
     let addr = {
         let out = daemon.stdout.take().expect("daemon stdout");
         let mut line = String::new();
         let _ = BufReader::new(out).read_line(&mut line);
         line.trim().to_string()
     };
+    let _ = std::fs::remove_file(&conf);
     let _guard = BusGuard(daemon);
     if !addr.starts_with("unix:") {
         eprintln!(

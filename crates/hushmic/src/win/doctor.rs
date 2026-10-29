@@ -203,7 +203,11 @@ pub fn render(r: &Report) -> (String, usize) {
     );
     line(&mut out, false, format!("  autostart: {}", r.autostart));
     line(&mut out, false, format!("  tray: {}", r.tray));
-    line(&mut out, false, format!("  notifications: {}", r.notifications));
+    line(
+        &mut out,
+        false,
+        format!("  notifications: {}", r.notifications),
+    );
     line(
         &mut out,
         false,
@@ -326,10 +330,10 @@ pub fn install_type(exe: Option<&std::path::Path>) -> String {
         return "unknown".into();
     };
     let dir = exe.parent().unwrap_or(exe);
-    let in_target_tree = dir
-        .components()
-        .any(|c| c.as_os_str() == "target")
-        && dir.file_name().is_some_and(|n| n == "debug" || n == "release");
+    let in_target_tree = dir.components().any(|c| c.as_os_str() == "target")
+        && dir
+            .file_name()
+            .is_some_and(|n| n == "debug" || n == "release");
     if in_target_tree {
         format!("development build ({})", dir.display())
     } else {
@@ -463,18 +467,13 @@ mod tests {
 
     #[test]
     fn install_type_separates_the_target_tree() {
-        assert!(
-            install_type(Some(std::path::Path::new(
-                "C:/src/hushmic/target/release/hushmic.exe"
-            )))
-            .starts_with("development build"),
-        );
-        assert!(
-            install_type(Some(std::path::Path::new(
-                "C:/Program Files/HushMic/hushmic.exe"
-            )))
-            .starts_with("installed"),
-        );
+        assert!(install_type(Some(std::path::Path::new(
+            "C:/src/hushmic/target/release/hushmic.exe"
+        )))
+        .starts_with("development build"),);
+        assert!(install_type(Some(std::path::Path::new(
+            "C:/Program Files/HushMic/hushmic.exe"
+        )))
+        .starts_with("installed"),);
     }
 }
-

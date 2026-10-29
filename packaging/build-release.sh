@@ -58,8 +58,8 @@ PLUGIN="$REPO_ROOT/target/release/libdpdfnet_ladspa.so"
 
 # Everything except the Windows staging dir: scripts/build-windows.sh owns
 # dist/hushmic-windows-x86_64/ and this script would otherwise delete it.
-find "$DIST" -mindepth 1 -maxdepth 1 ! -name hushmic-windows-x86_64 -exec rm -rf {} +
 mkdir -p "$DIST"
+find "$DIST" -mindepth 1 -maxdepth 1 ! -name hushmic-windows-x86_64 -exec rm -rf {} +
 
 # ---------------------------------------------------------------------------
 # 1. Tarball

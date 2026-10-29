@@ -2585,9 +2585,9 @@ fn install_ctrl_handler(tx: mpsc::Sender<WinEvent>) {
     let _ = CTRL_TX.set(tx);
     // SAFETY: the handler only sends on a channel (console handlers run on
     // their own thread, so unlike an async signal handler it may allocate).
-    if let Err(e) = unsafe {
-        windows::Win32::System::Console::SetConsoleCtrlHandler(Some(on_ctrl), true)
-    } {
+    if let Err(e) =
+        unsafe { windows::Win32::System::Console::SetConsoleCtrlHandler(Some(on_ctrl), true) }
+    {
         eprintln!("hushmic: cannot catch Ctrl-C ({e})");
     }
 }
@@ -2833,8 +2833,9 @@ fn cli_dispatch_win(args: &[String]) -> (i32, String) {
         ["config", "get", k, "--json"] => {
             config_cli::offline_get(&cfg, Some(k), true, device().as_deref())
         }
-        ["config", "set", k, rest @ ..] if !rest.is_empty() => chain::model_dir()
-            .and_then(|dir| config_cli::offline_set(k, &rest.join(" "), &dir)),
+        ["config", "set", k, rest @ ..] if !rest.is_empty() => {
+            chain::model_dir().and_then(|dir| config_cli::offline_set(k, &rest.join(" "), &dir))
+        }
         _ => Err(out),
     };
     match res {
@@ -3207,10 +3208,8 @@ fn run_daemon(tray: bool, headless: bool) -> i32 {
                         cfg = new;
                         let mut errors: Vec<String> = Vec::new();
                         if let Err(e) = cfg.save() {
-                            errors.push(format!(
-                                "could not write {}: {e}",
-                                Config::path().display()
-                            ));
+                            errors
+                                .push(format!("could not write {}: {e}", Config::path().display()));
                         }
                         if k == cc::Key::Autostart {
                             if let Err(e) = shell::set_autostart(cfg.autostart) {
@@ -3301,7 +3300,8 @@ fn run_daemon(tray: bool, headless: bool) -> i32 {
                             H::PushToMute if pressed => RunMode::Mute,
                             H::PushToMute => RunMode::Suppress,
                         });
-                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started) {
+                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started)
+                        {
                             eprintln!("hushmic: {e}");
                         }
                         prev_alive = control::update_prev_alive(prev_alive, cur, sel);
@@ -3313,7 +3313,8 @@ fn run_daemon(tray: bool, headless: bool) -> i32 {
                     MenuItem::Enable => {
                         let cur = cfg.enabled.then_some(mode);
                         let sel = if cfg.enabled { None } else { Some(mode) };
-                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started) {
+                        if let Err(e) = set_mode(&mut cfg, &mut chain, &mut mode, sel, &mut started)
+                        {
                             eprintln!("hushmic: {e}");
                         }
                         prev_alive = control::update_prev_alive(prev_alive, cur, sel);
@@ -3371,15 +3372,12 @@ fn run_daemon(tray: bool, headless: bool) -> i32 {
                                 let mic = cfg.mic.clone().unwrap_or_default();
                                 let say_cfg = cfg.clone();
                                 std::thread::spawn(move || {
-                                    let say_fn = |title: &str, body: &str| {
-                                        say(&say_cfg, title, body)
-                                    };
+                                    let say_fn =
+                                        |title: &str, body: &str| say(&say_cfg, title, body);
                                     let title = tr!("notify-mictest-title");
                                     match hushmic::win::mictest::run(&mic, &say_fn) {
                                         Ok(summary) => say_fn(&title, &summary),
-                                        Err(e) => {
-                                            say_fn(&tr!("notify-mictest-failed-title"), &e)
-                                        }
+                                        Err(e) => say_fn(&tr!("notify-mictest-failed-title"), &e),
                                     }
                                 });
                             }
@@ -3428,10 +3426,10 @@ fn run_daemon(tray: bool, headless: bool) -> i32 {
                         Some(mic) => match mic_live(mic) {
                             Some(false) | None => Some(false),
                             Some(true) => {
-                                let on_preferred = chain
-                                    .as_ref()
-                                    .and_then(chain_capture)
-                                    .is_some_and(|c| c.to_lowercase().contains(&mic.to_lowercase()));
+                                let on_preferred =
+                                    chain.as_ref().and_then(chain_capture).is_some_and(|c| {
+                                        c.to_lowercase().contains(&mic.to_lowercase())
+                                    });
                                 Some(!on_preferred)
                             }
                         },

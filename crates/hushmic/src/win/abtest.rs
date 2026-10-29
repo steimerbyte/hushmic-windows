@@ -22,9 +22,7 @@
 use crate::abtest::dsp::{LevelMeter, SpectrumAnalyzer};
 use crate::abtest::metrics;
 use crate::abtest::sample::{align_legs, levels, write_wav, DECLARED_LATENCY_SAMPLES};
-use crate::abtest::types::{
-    Channel, Command, Frame, LaunchGate, RECORD_SECS, SAMPLE_RATE,
-};
+use crate::abtest::types::{Channel, Command, Frame, LaunchGate, RECORD_SECS, SAMPLE_RATE};
 use crate::abtest::watch::{capture_death_warning, silent_mic_hint, ZeroWatch};
 use crate::config::{Config, Inference};
 use crate::win::audio::{list_devices, WasapiDuplex};
@@ -38,9 +36,7 @@ use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use windows::core::HSTRING;
-use windows::Win32::Media::Audio::{
-    PlaySoundW, SND_FILENAME, SND_NODEFAULT, SND_PURGE, SND_SYNC,
-};
+use windows::Win32::Media::Audio::{PlaySoundW, SND_FILENAME, SND_NODEFAULT, SND_PURGE, SND_SYNC};
 
 /// The alignment this backend cuts between the legs must be the controller's
 /// figure too, or the window would charge the comparison with a time offset.
@@ -157,8 +153,8 @@ pub(crate) struct EngineSpec {
 /// does for the daemon, here without the PipeWire preamble. Returns the child
 /// pid so the caller can log it.
 pub fn spawn_window() -> Result<u32, String> {
-    let exe = std::env::current_exe()
-        .map_err(|e| format!("this executable's path is unknown: {e}"))?;
+    let exe =
+        std::env::current_exe().map_err(|e| format!("this executable's path is unknown: {e}"))?;
     let child = std::process::Command::new(exe)
         .arg("--test-window")
         .spawn()
@@ -392,7 +388,9 @@ fn run_backend(b: Backend, repaint: Arc<dyn Fn() + Send + Sync>) {
 }
 
 fn device_present(capture: &str) -> bool {
-    resolve_capture(capture).map(|found| found.is_some()).unwrap_or(true)
+    resolve_capture(capture)
+        .map(|found| found.is_some())
+        .unwrap_or(true)
 }
 
 /// `Some(Some(name))` = a live capture endpoint matches `needle` (a case
@@ -432,9 +430,9 @@ fn spawn_capture(
     {
         Ok(handle) => handle,
         Err(e) => {
-            let _ = b
-                .frame_tx
-                .send(Frame::Warn(format!("the capture thread could not start: {e}")));
+            let _ = b.frame_tx.send(Frame::Warn(format!(
+                "the capture thread could not start: {e}"
+            )));
             repaint();
             return None;
         }
@@ -461,7 +459,9 @@ fn capture_loop(
         Ok(d) => d,
         Err(e) => {
             if !stop.load(Ordering::Relaxed) {
-                emit(Frame::Warn(format!("the microphone could not be opened: {e}")));
+                emit(Frame::Warn(format!(
+                    "the microphone could not be opened: {e}"
+                )));
                 shared.died.store(true, Ordering::Relaxed);
             }
             return;
@@ -513,8 +513,7 @@ fn capture_loop(
         // denoiser.
         if hop.iter().any(|s| *s != 0.0) && zero_filtered.feed(&out) {
             emit(Frame::Warn(
-                "the denoiser produced only silence: the suppressed view stays silent"
-                    .to_string(),
+                "the denoiser produced only silence: the suppressed view stays silent".to_string(),
             ));
         }
         for (ch, samples) in [(Channel::Raw, &hop[..]), (Channel::Filtered, &out[..])] {
@@ -528,7 +527,10 @@ fn capture_loop(
         let raw_db = level[0].feed(&hop);
         let filtered_db = level[1].feed(&out);
         for (raw_db, filtered_db) in raw_db.into_iter().zip(filtered_db) {
-            emit(Frame::Level { raw_db, filtered_db });
+            emit(Frame::Level {
+                raw_db,
+                filtered_db,
+            });
         }
         if let Some(take) = shared.rec.lock().unwrap().as_mut() {
             let room = take.target.saturating_sub(take.raw.len()).min(HOP);
@@ -701,9 +703,7 @@ pub(crate) fn play_blocking(wav: &Path) -> io::Result<()> {
                 "playback never finished — is an output device available?",
             ))
         }
-        Err(RecvTimeoutError::Disconnected) => {
-            Err(io::Error::other("the playback thread died"))
-        }
+        Err(RecvTimeoutError::Disconnected) => Err(io::Error::other("the playback thread died")),
     }
 }
 
