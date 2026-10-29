@@ -1,3 +1,7 @@
+> **Unofficial Windows port of [HushMic](https://github.com/Fovty/hushmic)** — not affiliated with or endorsed by its authors. Based on upstream [`v0.11.0`](https://github.com/Fovty/hushmic/tree/v0.11.0) (commit `045daab`).
+>
+> **Unverified:** the Windows build type-checks and links for `x86_64-pc-windows-msvc`, but it has never been run on Windows hardware. The Linux side is unchanged and keeps its own test results — see [Windows](#windows).
+
 <h1 align="center">
   <img src="docs/img/hushmic-logo.png" alt="HushMic" width="120"><br>
   HushMic
@@ -161,7 +165,7 @@ The tray holds noise suppression, bypass and mute, the A/B window (`--test-windo
 
 The EXE is a GUI-subsystem build, so double-clicking it opens no console window. It logs to stderr: start it from a terminal (`hushmic.exe --tray`) to read that log, or run `hushmic.exe --doctor`.
 
-**Status: compile-verified only.** The Windows build type-checks and links; it has not been run on Windows hardware. `hushmic.exe --doctor` is the first thing to run there — it names the capture and render devices it found, the virtual cable, and every asset with `ok` or `MISSING`.
+**Status.** As the note at the top says: compile-verified only, never run on Windows hardware. `hushmic.exe --doctor` is the first thing to run there — it names the capture and render devices it found, the virtual cable, and every asset with `ok` or `MISSING`.
 
 ### Windows troubleshooting
 
