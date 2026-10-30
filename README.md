@@ -6,7 +6,7 @@ An unofficial Windows port of [HushMic](https://github.com/Fovty/hushmic): real-
 >
 > **Unofficial.** Not affiliated with or endorsed by the HushMic authors. Bugs in this build belong here, not upstream.
 >
-> **No binaries.** This repository publishes no release artifacts; build from source below.
+> **Prebuilt, pre-release, still unverified.** [Releases](https://github.com/steimerbyte/hushmic-windows/releases) carries `hushmic-windows-x86_64-v0.11.0-win.1.zip` — a pre-release of binaries that have never been run on Windows hardware. Build from source below if you want the supported path.
 
 ## What this fork changes
 
@@ -33,6 +33,8 @@ Everything below is this fork's Windows layer. On Windows there is no PipeWire s
 HushMic renders into the first render device whose name contains `CABLE Input`, `VoiceMeeter Input` or `VB-Audio`, in that order. `HUSHMIC_SINK=<part of a device name>` overrides the search.
 
 ## Build
+
+Prebuilt unpack-and-run archives sit under [Releases](https://github.com/steimerbyte/hushmic-windows/releases); building from source stays the supported path.
 
 ```bash
 scripts/setup-assets.sh        # fetch the hash-pinned models (same files Linux ships)
